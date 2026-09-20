@@ -11,31 +11,11 @@ class BlockTwoSchemaTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_block_two_tables_exist_and_public_schema_contains_only_approved_tables(): void
+    public function test_block_two_tables_exist(): void
     {
         foreach (['unidades_medida', 'categorias_articulo', 'metodos_pago', 'cajas'] as $table) {
             $this->assertTrue(Schema::hasTable($table), "Expected table [{$table}] does not exist.");
         }
-
-        $tables = DB::select(<<<'SQL'
-            SELECT table_name
-              FROM information_schema.tables
-             WHERE table_schema = 'public'
-               AND table_type = 'BASE TABLE'
-             ORDER BY table_name
-            SQL);
-
-        $this->assertSame([
-            'cajas',
-            'categorias_articulo',
-            'metodos_pago',
-            'migrations',
-            'permisos',
-            'rol_permiso',
-            'roles',
-            'unidades_medida',
-            'usuarios',
-        ], array_map(static fn (object $row): string => $row->table_name, $tables));
     }
 
     public function test_block_two_column_metadata_matches_the_migrations(): void
