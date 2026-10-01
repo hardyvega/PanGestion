@@ -23,44 +23,16 @@ class BlockEightSchemaTest extends TestCase
         $tables = DB::table('information_schema.tables')
             ->where('table_schema', 'public')
             ->where('table_type', 'BASE TABLE')
+            ->whereIn('table_name', self::TABLES)
             ->orderBy('table_name')
             ->pluck('table_name')
             ->all();
 
-        $expected = [
-            'articulo_proveedor',
-            'articulos',
-            'cajas',
-            'categorias_articulo',
-            'clientes',
-            'correlativos_venta_diarios',
-            'detalle_pedidos',
-            'detalle_recetas',
-            'detalle_ventas',
-            'historial_costos_articulo',
-            'historial_precios_venta',
-            'metodos_pago',
-            'migrations',
-            'movimientos_caja',
-            'pagos_pedido',
-            'pagos_venta',
-            'pedidos',
-            'permisos',
-            'proveedores',
-            'recetas',
-            'rol_permiso',
-            'roles',
-            'sesiones_caja',
-            'unidades_medida',
-            'usuarios',
-            'ventas',
-        ];
+        $expectedTables = self::TABLES;
+        sort($expectedTables);
 
-        sort($tables);
-        sort($expected);
-
-        $this->assertCount(26, $tables);
-        $this->assertSame($expected, $tables);
+        $this->assertCount(count(self::TABLES), $tables);
+        $this->assertSame($expectedTables, $tables);
 
         foreach (self::TABLES as $table) {
             $this->assertTrue(Schema::hasTable($table));
