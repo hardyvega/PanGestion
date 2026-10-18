@@ -1,0 +1,2 @@
+@extends('layouts.authenticated', ['title' => 'Editar trabajador | Almapan'])
+@section('page')<section class="personnel-page" aria-labelledby="edit-worker-title"><header class="personnel-page-header"><div><p class="eyebrow">Personal</p><h1 id="edit-worker-title">Editar trabajador</h1><p class="personnel-intro">Actualiza los datos maestros; las tarifas y jornadas históricas permanecen intactas.</p></div></header><section class="personnel-panel"><h2>{{ $worker->nombres }} {{ $worker->apellidos }}</h2>@include('personnel.form')</section></section>@endsection

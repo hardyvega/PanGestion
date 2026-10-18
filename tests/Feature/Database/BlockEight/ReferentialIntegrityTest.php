@@ -362,6 +362,23 @@ class ReferentialIntegrityTest extends TestCase
         DB::table('usuarios')->where('id', $paymentUserId)->delete();
     }
 
+    public function test_sale_payment_referenced_by_cash_movement_cannot_be_deleted(): void
+    {
+        $paymentId = $this->createSalePayment(
+            $this->saleId,
+            $this->paymentMethodId,
+            $this->cashSessionId,
+            $this->userId,
+            'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+        );
+        $this->createCashMovement($this->cashSessionId, $this->userId, [
+            'pago_venta_id' => $paymentId,
+        ]);
+
+        $this->expectException(QueryException::class);
+        DB::table('pagos_venta')->where('id', $paymentId)->delete();
+    }
+
     private function createAdditionalSale(array $overrides = []): int
     {
         return $this->createSale(

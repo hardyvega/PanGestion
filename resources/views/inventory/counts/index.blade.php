@@ -1,0 +1,12 @@
+@extends('layouts.authenticated', ['title' => 'Conteos | Almapan'])
+@section('page')
+<section class="articles-page inventory-page" aria-labelledby="counts-title">
+<header class="articles-page-header"><div><p class="eyebrow">Inventario</p><h1 id="counts-title">Conteos físicos</h1><p class="articles-intro">Registra la observación y aplica diferencias con CountService.</p></div>@if ($canCreate)<a class="primary-button inline-button" href="{{ route('inventory.counts.create') }}">Iniciar conteo</a>@endif</header>
+@if (session('success'))<div class="form-alert form-alert-success" role="status">{{ session('success') }}</div>@endif
+@if ($errors->any())<div class="form-alert" role="alert">{{ $errors->first() }}</div>@endif
+<section class="articles-panel"><div class="articles-panel-heading"><h2>Conteos registrados</h2></div>
+@if ($counts->isEmpty())<p class="empty-state">No hay conteos registrados.</p>@else<div class="articles-table-wrap"><table class="articles-table"><thead><tr><th>Conteo</th><th>Responsable</th><th>Estado</th><th>Creado</th><th>Acción</th></tr></thead><tbody>
+@foreach ($counts as $count)<tr><td data-label="Conteo"><strong>#{{ $count->id }}</strong></td><td data-label="Responsable">{{ $count->creador }}</td><td data-label="Estado"><span class="article-status {{ $count->estado === 'confirmado' ? 'article-status-active' : '' }}">{{ ucfirst($count->estado) }}</span></td><td data-label="Creado">{{ \Carbon\CarbonImmutable::parse($count->created_at)->timezone('America/Santiago')->format('d/m/Y H:i') }}</td><td data-label="Acción">@if ($count->estado === 'borrador' && $canConfirm)<form method="POST" action="{{ route('inventory.counts.confirm', $count->id) }}">@csrf<button class="primary-button compact-button" type="submit">Aplicar diferencias</button></form>@else<span class="muted-text">Sin acciones</span>@endif</td></tr>
+@if ($details->has($count->id))<tr class="count-detail-row"><td colspan="5"><div class="count-detail-list">@foreach ($details->get($count->id) as $detail)@php($system = $detail->stock_teorico_snapshot ?? $detail->stock_sistema)@php($difference = \App\Support\Decimal::subtract((string) $detail->cantidad_contada, (string) $system, 3))<span><strong>{{ $detail->articulo_nombre_snapshot }}</strong> · Sistema: {{ $system }} · Físico: {{ $detail->cantidad_contada }} · Diferencia: {{ $difference }}</span>@endforeach</div></td></tr>@endif
+@endforeach</tbody></table></div><div class="articles-pagination">{{ $counts->links() }}</div>@endif</section></section>
+@endsection

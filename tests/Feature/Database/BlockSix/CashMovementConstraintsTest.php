@@ -7,14 +7,20 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\Support\CreatesBlockOneRecords;
+use Tests\Support\CreatesBlockFourRecords;
 use Tests\Support\CreatesBlockSixRecords;
+use Tests\Support\CreatesBlockSevenRecords;
+use Tests\Support\CreatesBlockEightRecords;
 use Tests\Support\CreatesBlockTwoRecords;
 use Tests\TestCase;
 
 class CashMovementConstraintsTest extends TestCase
 {
     use CreatesBlockOneRecords;
+    use CreatesBlockFourRecords;
     use CreatesBlockSixRecords;
+    use CreatesBlockSevenRecords;
+    use CreatesBlockEightRecords;
     use CreatesBlockTwoRecords;
     use RefreshDatabase;
 
@@ -24,6 +30,12 @@ class CashMovementConstraintsTest extends TestCase
 
     private int $userId;
 
+    private int $orderId;
+
+    private int $saleId;
+
+    private int $paymentMethodId;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -32,6 +44,14 @@ class CashMovementConstraintsTest extends TestCase
         $cashRegisterId = $this->createCashRegister();
         $this->userId = $this->createUser($this->roleId);
         $this->cashSessionId = $this->createCashSession($cashRegisterId, $this->userId);
+        $clientId = $this->createClient();
+        $this->orderId = $this->createOrder($clientId, $this->userId);
+        $this->saleId = $this->createSale(
+            $this->userId,
+            $this->cashSessionId,
+            'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        );
+        $this->paymentMethodId = $this->createPaymentMethod();
     }
 
     public function test_cash_movement_can_be_created_with_minimum_data_and_defaults(): void
@@ -184,8 +204,7 @@ class CashMovementConstraintsTest extends TestCase
 
     public function test_cash_movement_rejects_missing_session(): void
     {
-        $missingSessionId = $this->cashSessionId;
-        $this->assertSame(1, DB::table('sesiones_caja')->where('id', $missingSessionId)->delete());
+        $missingSessionId = ((int) DB::table('sesiones_caja')->max('id')) + 1;
 
         $this->expectException(QueryException::class);
         $this->createCashMovement($missingSessionId, $this->userId);
@@ -202,5 +221,107 @@ class CashMovementConstraintsTest extends TestCase
 
         $this->expectException(QueryException::class);
         $this->createCashMovement($this->cashSessionId, $missingUserId);
+    }
+
+    public function test_manual_cash_movement_allows_both_payment_sources_to_be_null(): void
+    {
+        $movementId = $this->createCashMovement($this->cashSessionId, $this->userId);
+        $movement = DB::table('movimientos_caja')->where('id', $movementId)->first();
+
+        $this->assertNull($movement->pago_venta_id);
+        $this->assertNull($movement->pago_pedido_id);
+    }
+
+    public function test_cash_movement_accepts_exactly_one_order_payment_source(): void
+    {
+        $paymentId = $this->createOrderPayment(
+            $this->orderId,
+            $this->paymentMethodId,
+            $this->cashSessionId,
+            $this->userId,
+            'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        );
+        $movementId = $this->createCashMovement($this->cashSessionId, $this->userId, [
+            'tipo_movimiento' => 'egreso',
+            'pago_pedido_id' => $paymentId,
+        ]);
+
+        $this->assertSame($paymentId, DB::table('movimientos_caja')->where('id', $movementId)->value('pago_pedido_id'));
+    }
+
+    public function test_cash_movement_accepts_exactly_one_sale_payment_source(): void
+    {
+        $paymentId = $this->createSalePayment(
+            $this->saleId,
+            $this->paymentMethodId,
+            $this->cashSessionId,
+            $this->userId,
+            'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        );
+        $movementId = $this->createCashMovement($this->cashSessionId, $this->userId, [
+            'pago_venta_id' => $paymentId,
+        ]);
+
+        $this->assertSame($paymentId, DB::table('movimientos_caja')->where('id', $movementId)->value('pago_venta_id'));
+    }
+
+    public function test_cash_movement_rejects_both_payment_sources(): void
+    {
+        $orderPaymentId = $this->createOrderPayment(
+            $this->orderId,
+            $this->paymentMethodId,
+            $this->cashSessionId,
+            $this->userId,
+            'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+        );
+        $salePaymentId = $this->createSalePayment(
+            $this->saleId,
+            $this->paymentMethodId,
+            $this->cashSessionId,
+            $this->userId,
+            'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+        );
+
+        $this->expectException(QueryException::class);
+        $this->createCashMovement($this->cashSessionId, $this->userId, [
+            'pago_venta_id' => $salePaymentId,
+            'pago_pedido_id' => $orderPaymentId,
+        ]);
+    }
+
+    public function test_withdrawal_cash_movement_rejects_payment_source(): void
+    {
+        $paymentId = $this->createOrderPayment(
+            $this->orderId,
+            $this->paymentMethodId,
+            $this->cashSessionId,
+            $this->userId,
+            'ffffffff-ffff-4fff-8fff-ffffffffffff',
+        );
+
+        $this->expectException(QueryException::class);
+        $this->createCashMovement($this->cashSessionId, $this->userId, [
+            'tipo_movimiento' => 'retiro',
+            'pago_pedido_id' => $paymentId,
+        ]);
+    }
+
+    public function test_same_payment_cannot_cause_two_cash_movements(): void
+    {
+        $paymentId = $this->createOrderPayment(
+            $this->orderId,
+            $this->paymentMethodId,
+            $this->cashSessionId,
+            $this->userId,
+            '11111111-1111-4111-8111-111111111111',
+        );
+        $this->createCashMovement($this->cashSessionId, $this->userId, [
+            'pago_pedido_id' => $paymentId,
+        ]);
+
+        $this->expectException(QueryException::class);
+        $this->createCashMovement($this->cashSessionId, $this->userId, [
+            'pago_pedido_id' => $paymentId,
+        ]);
     }
 }

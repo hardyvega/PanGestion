@@ -232,6 +232,10 @@ class BlockSevenSchemaTest extends TestCase
                 'table' => 'pagos_pedido',
                 'columns' => ['clave_idempotencia'],
             ],
+            'pedidos_clave_idempotencia_unique' => [
+                'table' => 'pedidos',
+                'columns' => ['clave_idempotencia'],
+            ],
         ], $actual);
     }
 
@@ -287,6 +291,7 @@ class BlockSevenSchemaTest extends TestCase
         $this->assertIndex($indexes, 'pagos_pedido_usuario_id_ocurrido_en_id_index', 'pagos_pedido', ['usuario_id', 'ocurrido_en', 'id']);
 
         $this->assertIndex($indexes, 'pedidos_pkey', 'pedidos', ['id'], unique: true, primary: true);
+        $this->assertIndex($indexes, 'pedidos_clave_idempotencia_unique', 'pedidos', ['clave_idempotencia'], unique: true);
         $this->assertIndex($indexes, 'pedidos_estado_created_at_id_index', 'pedidos', ['estado', 'created_at', 'id']);
         $this->assertIndex($indexes, 'pedidos_cliente_id_created_at_id_index', 'pedidos', ['cliente_id', 'created_at', 'id']);
         $this->assertIndex($indexes, 'pedidos_usuario_creador_id_created_at_id_index', 'pedidos', ['usuario_creador_id', 'created_at', 'id']);
@@ -309,6 +314,7 @@ class BlockSevenSchemaTest extends TestCase
             'pagos_pedido_sesion_caja_id_ocurrido_en_id_index',
             'pagos_pedido_usuario_id_ocurrido_en_id_index',
             'pedidos_cliente_id_created_at_id_index',
+            'pedidos_clave_idempotencia_unique',
             'pedidos_entrega_programada_en_id_index',
             'pedidos_estado_created_at_id_index',
             'pedidos_pkey',
@@ -529,6 +535,10 @@ class BlockSevenSchemaTest extends TestCase
                 'observacion' => $this->column('text', nullable: true),
                 'created_at' => $this->column('timestamptz', datetimePrecision: 6, default: 'CURRENT_TIMESTAMP'),
                 'updated_at' => $this->column('timestamptz', datetimePrecision: 6, default: 'CURRENT_TIMESTAMP'),
+                'articulo_sku_snapshot' => $this->column('varchar', length: 50, nullable: true),
+                'articulo_nombre_snapshot' => $this->column('varchar', length: 150, nullable: true),
+                'unidad_codigo_snapshot' => $this->column('varchar', length: 50, nullable: true),
+                'unidad_simbolo_snapshot' => $this->column('varchar', length: 20, nullable: true),
             ],
             'pagos_pedido' => [
                 'id' => $this->column('int8', default: 'sequence'),
@@ -556,6 +566,7 @@ class BlockSevenSchemaTest extends TestCase
                 'observacion' => $this->column('text', nullable: true),
                 'created_at' => $this->column('timestamptz', datetimePrecision: 6, default: 'CURRENT_TIMESTAMP'),
                 'updated_at' => $this->column('timestamptz', datetimePrecision: 6, default: 'CURRENT_TIMESTAMP'),
+                'clave_idempotencia' => $this->column('uuid', nullable: true),
             ],
         ];
     }

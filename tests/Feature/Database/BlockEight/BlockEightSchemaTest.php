@@ -87,10 +87,10 @@ class BlockEightSchemaTest extends TestCase
         }
 
         $this->assertCount(4, $actual['correlativos_venta_diarios']);
-        $this->assertCount(18, $actual['ventas']);
+        $this->assertCount(19, $actual['ventas']);
         $this->assertCount(12, $actual['detalle_ventas']);
         $this->assertCount(13, $actual['pagos_venta']);
-        $this->assertCount(47, $rows);
+        $this->assertCount(48, $rows);
 
         foreach (['id', 'folio', 'deleted_at'] as $column) {
             $this->assertFalse(Schema::hasColumn('correlativos_venta_diarios', $column));
@@ -270,6 +270,9 @@ class BlockEightSchemaTest extends TestCase
             'pagos_venta_clave_idempotencia_unique' => [
                 'table' => 'pagos_venta', 'columns' => ['clave_idempotencia'],
             ],
+            'ventas_clave_idempotencia_anulacion_unique' => [
+                'table' => 'ventas', 'columns' => ['clave_idempotencia_anulacion'],
+            ],
             'ventas_clave_idempotencia_unique' => [
                 'table' => 'ventas', 'columns' => ['clave_idempotencia'],
             ],
@@ -329,6 +332,7 @@ class BlockEightSchemaTest extends TestCase
         $this->assertIndex($indexes, 'ventas_pkey', 'ventas', ['id'], unique: true, primary: true);
         $this->assertIndex($indexes, 'ventas_fecha_comercial_numero_diario_unique', 'ventas', ['fecha_comercial', 'numero_diario'], unique: true);
         $this->assertIndex($indexes, 'ventas_clave_idempotencia_unique', 'ventas', ['clave_idempotencia'], unique: true);
+        $this->assertIndex($indexes, 'ventas_clave_idempotencia_anulacion_unique', 'ventas', ['clave_idempotencia_anulacion'], unique: true);
         $this->assertIndex($indexes, 'ventas_pedido_id_unique', 'ventas', ['pedido_id'], unique: true);
         $this->assertIndex($indexes, 'ventas_completada_en_id_index', 'ventas', ['completada_en', 'id']);
         $this->assertIndex($indexes, 'ventas_usuario_id_completada_en_id_index', 'ventas', ['usuario_id', 'completada_en', 'id']);
@@ -359,7 +363,7 @@ class BlockEightSchemaTest extends TestCase
         $this->assertIndex($indexes, 'pagos_venta_metodo_pago_id_ocurrido_en_id_index', 'pagos_venta', ['metodo_pago_id', 'ocurrido_en', 'id']);
         $this->assertIndex($indexes, 'pagos_venta_usuario_id_ocurrido_en_id_index', 'pagos_venta', ['usuario_id', 'ocurrido_en', 'id']);
 
-        $this->assertCount(19, $indexes);
+        $this->assertCount(20, $indexes);
         $this->assertCount(11, array_filter(
             $indexes,
             static fn (array $index): bool => ! $index['primary'] && ! $index['unique'],
@@ -766,6 +770,7 @@ class BlockEightSchemaTest extends TestCase
                 'observacion' => $this->column('text', nullable: true),
                 'created_at' => $this->column('timestamptz', datetimePrecision: 6, default: 'CURRENT_TIMESTAMP'),
                 'updated_at' => $this->column('timestamptz', datetimePrecision: 6, default: 'CURRENT_TIMESTAMP'),
+                'clave_idempotencia_anulacion' => $this->column('uuid', nullable: true),
             ],
         ];
     }

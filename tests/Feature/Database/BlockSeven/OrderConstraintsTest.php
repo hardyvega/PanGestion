@@ -180,4 +180,21 @@ class OrderConstraintsTest extends TestCase
         $this->assertSame(1, DB::table('pedidos')->where('id', $orderId)->count());
         $this->assertSame(0, DB::table('detalle_pedidos')->where('pedido_id', $orderId)->count());
     }
+
+    public function test_order_idempotency_key_is_nullable_uuid_and_unique(): void
+    {
+        $orderWithoutKeyId = $this->createOrder($this->clientId, $this->creatorId);
+        $this->assertNull(DB::table('pedidos')->where('id', $orderWithoutKeyId)->value('clave_idempotencia'));
+
+        $key = '11111111-1111-4111-8111-111111111111';
+        $orderId = $this->createOrder($this->clientId, $this->creatorId, [
+            'clave_idempotencia' => $key,
+        ]);
+        $this->assertSame($key, DB::table('pedidos')->where('id', $orderId)->value('clave_idempotencia'));
+
+        $this->expectException(QueryException::class);
+        $this->createOrder($this->clientId, $this->creatorId, [
+            'clave_idempotencia' => $key,
+        ]);
+    }
 }

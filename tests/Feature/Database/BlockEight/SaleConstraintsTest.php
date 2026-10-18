@@ -608,6 +608,38 @@ class SaleConstraintsTest extends TestCase
         $this->assertNotSame($this->clientId, $otherClientId);
     }
 
+    public function test_sale_annulment_idempotency_key_is_nullable_and_independent(): void
+    {
+        $firstKey = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+        $annulmentKey = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+        $firstSaleId = $this->createSale(
+            $this->userId,
+            $this->cashSessionId,
+            $firstKey,
+            ['clave_idempotencia_anulacion' => $annulmentKey],
+        );
+        $this->assertSame(
+            $annulmentKey,
+            DB::table('ventas')->where('id', $firstSaleId)->value('clave_idempotencia_anulacion'),
+        );
+
+        $secondSaleId = $this->createSale(
+            $this->userId,
+            $this->cashSessionId,
+            'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+            ['numero_diario' => 2],
+        );
+        $this->assertNull(DB::table('ventas')->where('id', $secondSaleId)->value('clave_idempotencia_anulacion'));
+
+        $this->expectException(QueryException::class);
+        $this->createSale(
+            $this->userId,
+            $this->cashSessionId,
+            'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+            ['numero_diario' => 3, 'clave_idempotencia_anulacion' => $annulmentKey],
+        );
+    }
+
     private function createDistinctUser(string $username): int
     {
         return $this->createUser($this->roleId, [

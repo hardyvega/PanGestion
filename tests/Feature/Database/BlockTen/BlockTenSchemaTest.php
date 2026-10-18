@@ -87,10 +87,10 @@ class BlockTenSchemaTest extends TestCase
             }
         }
 
-        $this->assertCount(10, $actual['conteos_inventario']);
-        $this->assertCount(12, $actual['detalle_conteos_inventario']);
+        $this->assertCount(12, $actual['conteos_inventario']);
+        $this->assertCount(13, $actual['detalle_conteos_inventario']);
         $this->assertCount(18, $actual['mermas']);
-        $this->assertCount(40, $rows);
+        $this->assertCount(43, $rows);
     }
 
     public function test_primary_keys_and_owned_sequences_match_migrations(): void
@@ -202,7 +202,7 @@ class BlockTenSchemaTest extends TestCase
             $this->assertSame($names, $actual[$table], "Unexpected CHECK constraints for {$table}.");
         }
 
-        $this->assertCount(23, $definitions);
+        $this->assertCount(24, $definitions);
 
         foreach ($this->expectedCheckFragments() as $constraint => $fragments) {
             $this->assertArrayHasKey($constraint, $definitions);
@@ -218,7 +218,7 @@ class BlockTenSchemaTest extends TestCase
         }
     }
 
-    public function test_unique_constraints_and_partial_unique_index_total_four(): void
+    public function test_unique_constraints_and_partial_unique_indexes_match_current_schema(): void
     {
         $rows = DB::select(<<<'SQL'
             SELECT tbl.relname AS table_name, con.conname AS constraint_name,
@@ -250,6 +250,12 @@ class BlockTenSchemaTest extends TestCase
         }
 
         $this->assertSame([
+            'conteos_inventario_clave_idempotencia_confirmacion_unique' => [
+                'table' => 'conteos_inventario', 'columns' => ['clave_idempotencia_confirmacion'],
+            ],
+            'conteos_inventario_clave_idempotencia_creacion_unique' => [
+                'table' => 'conteos_inventario', 'columns' => ['clave_idempotencia_creacion'],
+            ],
             'detalle_conteos_inventario_conteo_articulo_unique' => [
                 'table' => 'detalle_conteos_inventario',
                 'columns' => ['conteo_inventario_id', 'articulo_id'],
@@ -283,7 +289,7 @@ class BlockTenSchemaTest extends TestCase
         $this->assertSame('conteos_inventario_estado_borrador_unique', $partialUniqueIndexes[0]->index_name);
         $this->assertSame('conteos_inventario', $partialUniqueIndexes[0]->table_name);
         $this->assertSame("estado='borrador'", $this->normalizePredicate($partialUniqueIndexes[0]->predicate));
-        $this->assertSame(4, count($constraints) + count($partialUniqueIndexes));
+        $this->assertSame(6, count($constraints) + count($partialUniqueIndexes));
     }
 
     public function test_indexes_match_approved_semantics(): void
@@ -339,6 +345,20 @@ class BlockTenSchemaTest extends TestCase
             unique: true,
             predicate: "estado='borrador'",
         );
+        $this->assertIndex(
+            $indexes,
+            'conteos_inventario_clave_idempotencia_confirmacion_unique',
+            'conteos_inventario',
+            ['clave_idempotencia_confirmacion'],
+            unique: true,
+        );
+        $this->assertIndex(
+            $indexes,
+            'conteos_inventario_clave_idempotencia_creacion_unique',
+            'conteos_inventario',
+            ['clave_idempotencia_creacion'],
+            unique: true,
+        );
         $this->assertIndex($indexes, 'conteos_inventario_created_at_id_index', 'conteos_inventario', ['created_at', 'id']);
         $this->assertIndex($indexes, 'conteos_inventario_estado_created_at_id_index', 'conteos_inventario', ['estado', 'created_at', 'id']);
         $this->assertIndex($indexes, 'conteos_inventario_usuario_creador_id_created_at_id_index', 'conteos_inventario', ['usuario_creador_id', 'created_at', 'id']);
@@ -372,6 +392,13 @@ class BlockTenSchemaTest extends TestCase
             'detalle_conteos_inventario',
             ['articulo_id', 'conteo_inventario_id', 'id'],
         );
+        $this->assertIndex(
+            $indexes,
+            'detalle_conteos_mov_inv_observado_id_index',
+            'detalle_conteos_inventario',
+            ['movimiento_inventario_observado_id'],
+            predicate: 'movimiento_inventario_observado_idisnotnull',
+        );
 
         $this->assertIndex($indexes, 'mermas_pkey', 'mermas', ['id'], unique: true, primary: true);
         $this->assertIndex($indexes, 'mermas_clave_idempotencia_unique', 'mermas', ['clave_idempotencia'], unique: true);
@@ -388,8 +415,8 @@ class BlockTenSchemaTest extends TestCase
             predicate: 'usuario_anulador_idisnotnull',
         );
 
-        $this->assertCount(19, $indexes);
-        $this->assertCount(12, array_filter(
+        $this->assertCount(22, $indexes);
+        $this->assertCount(13, array_filter(
             $indexes,
             static fn (array $index): bool => ! $index['primary'] && ! $index['unique'],
         ));
@@ -447,7 +474,7 @@ class BlockTenSchemaTest extends TestCase
         ksort($expected);
 
         $this->assertSame($expected, $actual);
-        $this->assertCount(10, $actual);
+        $this->assertCount(11, $actual);
     }
 
     public function test_block_ten_tables_have_no_user_defined_triggers(): void
@@ -621,6 +648,7 @@ class BlockTenSchemaTest extends TestCase
                 'detalle_conteos_inventario_cantidad_contada_valida_check',
                 'detalle_conteos_inventario_captura_consistente_check',
                 'detalle_conteos_inventario_stock_teorico_consistente_check',
+                'detalle_conteos_mov_inv_observado_consistente_check',
             ],
             'mermas' => [
                 'mermas_articulo_sku_snapshot_valido_check',
@@ -679,6 +707,10 @@ class BlockTenSchemaTest extends TestCase
             'detalle_conteos_inventario_stock_teorico_consistente_check' => [
                 'stock_teorico_snapshot IS NULL', 'cantidad_contada IS NOT NULL',
                 'stock_teorico_snapshot >= 0', "stock_teorico_snapshot <> 'NaN'",
+            ],
+            'detalle_conteos_mov_inv_observado_consistente_check' => [
+                'movimiento_inventario_observado_id IS NULL',
+                'cantidad_contada IS NOT NULL', 'contada_en IS NOT NULL',
             ],
             'mermas_articulo_sku_snapshot_valido_check' => [
                 "btrim(articulo_sku_snapshot) <> ''", 'articulo_sku_snapshot = btrim(articulo_sku_snapshot)',
@@ -749,6 +781,10 @@ class BlockTenSchemaTest extends TestCase
                 'table' => 'detalle_conteos_inventario', 'columns' => ['articulo_id'],
                 'target' => 'articulos', 'targetColumns' => ['id'],
             ],
+            'detalle_conteos_mov_inv_observado_id_foreign' => [
+                'table' => 'detalle_conteos_inventario', 'columns' => ['movimiento_inventario_observado_id'],
+                'target' => 'movimientos_inventario', 'targetColumns' => ['id'],
+            ],
             'mermas_articulo_id_foreign' => [
                 'table' => 'mermas', 'columns' => ['articulo_id'],
                 'target' => 'articulos', 'targetColumns' => ['id'],
@@ -782,6 +818,8 @@ class BlockTenSchemaTest extends TestCase
                 'observacion' => $this->column('text', 'text', nullable: true),
                 'created_at' => $this->column('timestamp with time zone', 'timestamptz', datetimePrecision: 6, default: 'CURRENT_TIMESTAMP'),
                 'updated_at' => $this->column('timestamp with time zone', 'timestamptz', datetimePrecision: 6, default: 'CURRENT_TIMESTAMP'),
+                'clave_idempotencia_creacion' => $this->column('uuid', 'uuid', nullable: true),
+                'clave_idempotencia_confirmacion' => $this->column('uuid', 'uuid', nullable: true),
             ],
             'detalle_conteos_inventario' => [
                 'id' => $this->column('bigint', 'int8', default: 'sequence'),
@@ -796,6 +834,7 @@ class BlockTenSchemaTest extends TestCase
                 'stock_teorico_snapshot' => $this->column('numeric', 'numeric', numericPrecision: 14, scale: 3, nullable: true),
                 'created_at' => $this->column('timestamp with time zone', 'timestamptz', datetimePrecision: 6, default: 'CURRENT_TIMESTAMP'),
                 'updated_at' => $this->column('timestamp with time zone', 'timestamptz', datetimePrecision: 6, default: 'CURRENT_TIMESTAMP'),
+                'movimiento_inventario_observado_id' => $this->column('bigint', 'int8', nullable: true),
             ],
             'mermas' => [
                 'id' => $this->column('bigint', 'int8', default: 'sequence'),

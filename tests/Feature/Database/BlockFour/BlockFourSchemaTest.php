@@ -415,6 +415,10 @@ class BlockFourSchemaTest extends TestCase
                 'table' => 'articulo_proveedor', 'columns' => ['proveedor_id'],
                 'target' => 'proveedores', 'targetColumns' => ['id'],
             ],
+            'hist_costos_detalle_recepcion_id_foreign' => [
+                'table' => 'historial_costos_articulo', 'columns' => ['detalle_recepcion_mercaderia_id'],
+                'target' => 'detalle_recepciones_mercaderia', 'targetColumns' => ['id'],
+            ],
             'historial_costos_articulo_articulo_id_foreign' => [
                 'table' => 'historial_costos_articulo', 'columns' => ['articulo_id'],
                 'target' => 'articulos', 'targetColumns' => ['id'],
@@ -530,6 +534,7 @@ class BlockFourSchemaTest extends TestCase
                 'usuario_id' => $this->column('int8'),
                 'motivo' => $this->column('text', nullable: true),
                 'created_at' => $this->column('timestamptz', datetimePrecision: 6, default: 'CURRENT_TIMESTAMP'),
+                'detalle_recepcion_mercaderia_id' => $this->column('int8', nullable: true),
             ],
         ];
     }

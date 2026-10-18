@@ -1,0 +1,2 @@
+@extends('layouts.authenticated', ['title' => 'Nuevo trabajador | Almapan'])
+@section('page')<section class="personnel-page" aria-labelledby="create-worker-title"><header class="personnel-page-header"><div><p class="eyebrow">Personal</p><h1 id="create-worker-title">Nuevo trabajador</h1><p class="personnel-intro">Registra los datos maestros sin crear una cuenta de acceso.</p></div></header><section class="personnel-panel"><h2>Datos del trabajador</h2>@include('personnel.form')</section></section>@endsection

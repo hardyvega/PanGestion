@@ -234,4 +234,20 @@ class OrderDetailConstraintsTest extends TestCase
         $this->assertSame('0.000', DB::table('articulos')->where('id', $this->articleId)->value('stock_actual'));
         $this->assertSame(1, DB::table('detalle_pedidos')->where('id', $detailId)->count());
     }
+
+    public function test_order_detail_accepts_nullable_snapshot_columns(): void
+    {
+        $detailId = $this->createOrderDetail($this->orderId, $this->articleId, [
+            'articulo_sku_snapshot' => 'pan_prueba',
+            'articulo_nombre_snapshot' => 'Pan de prueba',
+            'unidad_codigo_snapshot' => 'kg',
+            'unidad_simbolo_snapshot' => 'kg',
+        ]);
+        $detail = DB::table('detalle_pedidos')->where('id', $detailId)->first();
+
+        $this->assertSame('pan_prueba', $detail->articulo_sku_snapshot);
+        $this->assertSame('Pan de prueba', $detail->articulo_nombre_snapshot);
+        $this->assertSame('kg', $detail->unidad_codigo_snapshot);
+        $this->assertSame('kg', $detail->unidad_simbolo_snapshot);
+    }
 }

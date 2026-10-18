@@ -149,6 +149,7 @@ class BlockSixSchemaTest extends TestCase
 
         $expected = [
             'movimientos_caja' => [
+                'movimientos_caja_causalidad_pago_check',
                 'movimientos_caja_concepto_valido_check',
                 'movimientos_caja_monto_valido_check',
                 'movimientos_caja_tipo_movimiento_valido_check',
@@ -212,6 +213,8 @@ class BlockSixSchemaTest extends TestCase
         }
 
         $this->assertIndex($indexes, 'movimientos_caja_pkey', 'movimientos_caja', ['id'], unique: true, primary: true);
+        $this->assertIndex($indexes, 'movimientos_caja_pago_pedido_unique', 'movimientos_caja', ['pago_pedido_id'], unique: true, predicate: 'pago_pedido_idisnotnull');
+        $this->assertIndex($indexes, 'movimientos_caja_pago_venta_unique', 'movimientos_caja', ['pago_venta_id'], unique: true, predicate: 'pago_venta_idisnotnull');
         $this->assertIndex($indexes, 'movimientos_caja_sesion_caja_id_ocurrido_en_id_index', 'movimientos_caja', ['sesion_caja_id', 'ocurrido_en', 'id']);
         $this->assertIndex($indexes, 'movimientos_caja_tipo_movimiento_ocurrido_en_id_index', 'movimientos_caja', ['tipo_movimiento', 'ocurrido_en', 'id']);
         $this->assertIndex($indexes, 'movimientos_caja_usuario_id_ocurrido_en_id_index', 'movimientos_caja', ['usuario_id', 'ocurrido_en', 'id']);
@@ -223,6 +226,8 @@ class BlockSixSchemaTest extends TestCase
 
         $expectedNames = [
             'movimientos_caja_pkey',
+            'movimientos_caja_pago_pedido_unique',
+            'movimientos_caja_pago_venta_unique',
             'movimientos_caja_sesion_caja_id_ocurrido_en_id_index',
             'movimientos_caja_tipo_movimiento_ocurrido_en_id_index',
             'movimientos_caja_usuario_id_ocurrido_en_id_index',
@@ -301,6 +306,14 @@ class BlockSixSchemaTest extends TestCase
         }
 
         $this->assertSame([
+            'movimientos_caja_pago_pedido_id_foreign' => [
+                'table' => 'movimientos_caja', 'columns' => ['pago_pedido_id'],
+                'target' => 'pagos_pedido', 'targetColumns' => ['id'],
+            ],
+            'movimientos_caja_pago_venta_id_foreign' => [
+                'table' => 'movimientos_caja', 'columns' => ['pago_venta_id'],
+                'target' => 'pagos_venta', 'targetColumns' => ['id'],
+            ],
             'movimientos_caja_sesion_caja_id_foreign' => [
                 'table' => 'movimientos_caja', 'columns' => ['sesion_caja_id'],
                 'target' => 'sesiones_caja', 'targetColumns' => ['id'],
@@ -395,6 +408,8 @@ class BlockSixSchemaTest extends TestCase
                 'concepto' => $this->column('text'),
                 'ocurrido_en' => $this->column('timestamptz', datetimePrecision: 6, default: 'CURRENT_TIMESTAMP'),
                 'created_at' => $this->column('timestamptz', datetimePrecision: 6, default: 'CURRENT_TIMESTAMP'),
+                'pago_venta_id' => $this->column('int8', nullable: true),
+                'pago_pedido_id' => $this->column('int8', nullable: true),
             ],
             'sesiones_caja' => [
                 'id' => $this->column('int8', default: 'sequence'),
