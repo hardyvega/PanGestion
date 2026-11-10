@@ -152,11 +152,13 @@ class BlockSixSchemaTest extends TestCase
                 'movimientos_caja_causalidad_pago_check',
                 'movimientos_caja_concepto_valido_check',
                 'movimientos_caja_monto_valido_check',
+                'movimientos_caja_retiro_cierre_check',
                 'movimientos_caja_tipo_movimiento_valido_check',
             ],
             'sesiones_caja' => [
                 'sesiones_caja_cierre_consistente_check',
                 'sesiones_caja_fechas_validas_check',
+                'sesiones_caja_fondo_consistente_check',
                 'sesiones_caja_monto_cierre_declarado_valido_check',
                 'sesiones_caja_monto_inicial_valido_check',
                 'sesiones_caja_monto_teorico_cierre_valido_check',
@@ -223,8 +225,14 @@ class BlockSixSchemaTest extends TestCase
         $this->assertIndex($indexes, 'sesiones_caja_caja_id_abierta_en_id_index', 'sesiones_caja', ['caja_id', 'abierta_en', 'id']);
         $this->assertIndex($indexes, 'sesiones_caja_usuario_apertura_id_index', 'sesiones_caja', ['usuario_apertura_id']);
         $this->assertIndex($indexes, 'sesiones_caja_usuario_cierre_id_index', 'sesiones_caja', ['usuario_cierre_id'], predicate: 'usuario_cierre_idisnotnull');
+        $this->assertIndex($indexes, 'sesiones_caja_fondo_autorizado_id_unique', 'sesiones_caja', ['fondo_autorizado_id'], unique: true);
+        $this->assertIndex($indexes, 'sesiones_caja_clave_idempotencia_apertura_unique', 'sesiones_caja', ['clave_idempotencia_apertura'], unique: true);
+        $this->assertIndex($indexes, 'movimientos_caja_cierre_caja_id_unique', 'movimientos_caja', ['cierre_caja_id'], unique: true);
 
         $expectedNames = [
+            'sesiones_caja_fondo_autorizado_id_unique',
+            'sesiones_caja_clave_idempotencia_apertura_unique',
+            'movimientos_caja_cierre_caja_id_unique',
             'movimientos_caja_pkey',
             'movimientos_caja_pago_pedido_unique',
             'movimientos_caja_pago_venta_unique',
@@ -249,8 +257,7 @@ class BlockSixSchemaTest extends TestCase
             ['movimientos_caja', 'tipo_movimiento'],
             ['movimientos_caja', 'usuario_id'],
         ] as [$table, $column]) {
-            $redundant = array_filter($indexes, static fn (array $index): bool =>
-                $index['table'] === $table
+            $redundant = array_filter($indexes, static fn (array $index): bool => $index['table'] === $table
                 && $index['columns'] === [$column]
                 && $index['attributeCount'] === 1
                 && ! $index['primary']
@@ -306,6 +313,9 @@ class BlockSixSchemaTest extends TestCase
         }
 
         $this->assertSame([
+            'movimientos_caja_cierre_caja_id_foreign' => [
+                'table' => 'movimientos_caja', 'columns' => ['cierre_caja_id'], 'target' => 'cierres_caja', 'targetColumns' => ['id'],
+            ],
             'movimientos_caja_pago_pedido_id_foreign' => [
                 'table' => 'movimientos_caja', 'columns' => ['pago_pedido_id'],
                 'target' => 'pagos_pedido', 'targetColumns' => ['id'],
@@ -326,6 +336,9 @@ class BlockSixSchemaTest extends TestCase
                 'table' => 'sesiones_caja', 'columns' => ['caja_id'],
                 'target' => 'cajas', 'targetColumns' => ['id'],
             ],
+            'sesiones_caja_fondo_autorizado_id_foreign' => [
+                'table' => 'sesiones_caja', 'columns' => ['fondo_autorizado_id'], 'target' => 'fondos_caja_autorizados', 'targetColumns' => ['id'],
+            ],
             'sesiones_caja_usuario_apertura_id_foreign' => [
                 'table' => 'sesiones_caja', 'columns' => ['usuario_apertura_id'],
                 'target' => 'usuarios', 'targetColumns' => ['id'],
@@ -337,7 +350,7 @@ class BlockSixSchemaTest extends TestCase
         ], $actual);
     }
 
-    public function test_block_six_tables_have_no_user_defined_triggers(): void
+    public function test_block_six_tables_only_have_the_authorized_daily_closing_guards(): void
     {
         $triggers = DB::select(<<<'SQL'
             SELECT tbl.relname AS table_name, trg.tgname AS trigger_name
@@ -347,9 +360,13 @@ class BlockSixSchemaTest extends TestCase
              WHERE nsp.nspname = 'public'
                AND tbl.relname IN ('sesiones_caja', 'movimientos_caja')
                AND NOT trg.tgisinternal
+             ORDER BY tbl.relname
             SQL);
 
-        $this->assertSame([], $triggers);
+        $this->assertSame([
+            ['table_name' => 'movimientos_caja', 'trigger_name' => 'movimientos_caja_confirmados'],
+            ['table_name' => 'sesiones_caja', 'trigger_name' => 'sesiones_caja_confirmadas'],
+        ], array_map(fn ($row) => (array) $row, $triggers));
     }
 
     private function assertIndex(
@@ -410,6 +427,7 @@ class BlockSixSchemaTest extends TestCase
                 'created_at' => $this->column('timestamptz', datetimePrecision: 6, default: 'CURRENT_TIMESTAMP'),
                 'pago_venta_id' => $this->column('int8', nullable: true),
                 'pago_pedido_id' => $this->column('int8', nullable: true),
+                'cierre_caja_id' => $this->column('int8', nullable: true),
             ],
             'sesiones_caja' => [
                 'id' => $this->column('int8', default: 'sequence'),
@@ -424,6 +442,9 @@ class BlockSixSchemaTest extends TestCase
                 'observacion_cierre' => $this->column('text', nullable: true),
                 'created_at' => $this->column('timestamptz', datetimePrecision: 6, default: 'CURRENT_TIMESTAMP'),
                 'updated_at' => $this->column('timestamptz', datetimePrecision: 6, default: 'CURRENT_TIMESTAMP'),
+                'fondo_autorizado_id' => $this->column('int8', nullable: true),
+                'fecha_operativa' => $this->column('date', datetimePrecision: 0, nullable: true),
+                'clave_idempotencia_apertura' => $this->column('uuid', nullable: true),
             ],
         ];
     }

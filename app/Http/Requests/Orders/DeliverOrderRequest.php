@@ -21,6 +21,7 @@ final class DeliverOrderRequest extends FormRequest
     {
         return [
             'command_uuid' => ['required', 'uuid'],
+            'cash_session_id' => ['nullable', 'integer', 'min:1'],
             'final_payment' => ['nullable', 'array'],
             'final_payment.payment_method_id' => ['required_with:final_payment', 'integer', 'min:1'],
             'final_payment.amount' => ['required_with:final_payment', 'regex:/^\d{1,12}(?:\.\d{1,2})?$/'],

@@ -8,7 +8,7 @@
         </header>
         @if ($errors->any()) <div class="form-alert" role="alert">Revisa los campos marcados.</div> @endif
         <section class="articles-panel">
-            <form class="article-form" method="POST" action="{{ route('articles.update', $article) }}" enctype="multipart/form-data">
+            <form class="article-form" method="POST" action="{{ route('articles.update', $article) }}" enctype="multipart/form-data" data-article-form>
                 @csrf
                 @method('PUT')
                 @include('articles.form', ['article' => $article])

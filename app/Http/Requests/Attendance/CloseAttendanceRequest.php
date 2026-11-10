@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace App\Http\Requests\Attendance;
 
 use App\Enums\PermissionCode;
+use App\Http\Requests\ValidatesCommercialTime;
 use App\Services\Authorization\EffectivePermissionResolver;
 use Illuminate\Foundation\Http\FormRequest;
 
 final class CloseAttendanceRequest extends FormRequest
 {
+    use ValidatesCommercialTime;
+
     public function authorize(): bool
     {
         $user = $this->user();
@@ -22,6 +25,9 @@ final class CloseAttendanceRequest extends FormRequest
 
     public function rules(): array
     {
-        return ['finalizada_en' => ['nullable', 'date_format:Y-m-d\TH:i']];
+        return [
+            'finalizada_en' => ['bail', 'nullable', 'string', $this->commercialTimeRule()],
+            'finalizada_en_occurrence' => ['nullable', 'in:primera,segunda'],
+        ];
     }
 }

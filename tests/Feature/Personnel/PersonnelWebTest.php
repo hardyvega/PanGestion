@@ -14,6 +14,7 @@ use App\Data\Personnel\CreateWorkerCommand;
 use App\Data\Personnel\SetHourlyRateCommand;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\Support\BlockTwelveTestSupport;
 use Tests\TestCase;
 
@@ -96,5 +97,69 @@ final class PersonnelWebTest extends TestCase
             'id' => $open->id,
             'estado' => AttendanceStatus::Closed->value,
         ]);
+    }
+
+    public function test_repeated_santiago_hours_require_a_choice_and_preserve_elapsed_time_and_rate(): void
+    {
+        $this->travelTo(CarbonImmutable::parse('2026-11-08 22:00:00 UTC'));
+        $manager = $this->b12Manager();
+        $worker = app(WorkerService::class)->create($manager, new CreateWorkerCommand(
+            'P-DST', 'Rosa', 'Jornada', new CarbonImmutable('2026-01-01', 'UTC'), null,
+        ));
+        $this->actingAs($manager);
+        $rate = route('personnel.rates.store', $worker);
+        $rateData = ['valor_hora' => '12.00', 'vigente_desde' => '2026-04-04T23:00'];
+        $this->post($rate, $rateData)->assertSessionHasErrors('vigente_desde');
+        $this->post($rate, $rateData + ['vigente_desde_occurrence' => 'primera'])->assertSessionHasNoErrors();
+        $this->post($rate, [
+            'valor_hora' => '18.00', 'vigente_desde' => '2026-04-04T23:00', 'vigente_desde_occurrence' => 'segunda',
+        ])->assertSessionHasNoErrors();
+        $this->assertDatabaseHas('tarifas_hora_trabajador', ['valor_hora' => '18.00', 'vigente_desde' => '2026-04-05 03:00:00+00']);
+
+        $url = route('attendance.manual.store');
+        $this->post($url, [
+            'trabajador_id' => $worker->id, 'iniciada_en' => '2026-09-06T00:30', 'finalizada_en' => '2026-09-06T01:30',
+        ])->assertSessionHasErrors(['iniciada_en' => 'Esta hora no existe en Santiago por el cambio de horario. Elige otra hora.']);
+        $repeated = ['trabajador_id' => $worker->id, 'iniciada_en' => '2026-04-04T23:45', 'finalizada_en' => '2026-04-04T23:15'];
+        $this->post($url, $repeated)->assertSessionHasErrors(['iniciada_en', 'finalizada_en']);
+        $this->assertDatabaseCount('jornadas_trabajo', 0);
+
+        $this->post($url, $repeated + ['iniciada_en_occurrence' => 'primera', 'finalizada_en_occurrence' => 'segunda'])
+            ->assertSessionHasNoErrors();
+        $this->assertDatabaseHas('jornadas_trabajo', [
+            'trabajador_id' => $worker->id,
+            'iniciada_en' => '2026-04-05 02:45:00+00', 'finalizada_en' => '2026-04-05 03:15:00+00',
+            'minutos_trabajados' => 30, 'valor_hora_snapshot' => '12.00', 'monto_calculado' => '6.00',
+        ]);
+        $this->get(route('personnel.pay-report', ['desde' => '2026-04-04', 'hasta' => '2026-04-04']))
+            ->assertOk()->assertSeeInOrder(['04/04/2026 23:45', '04/04/2026 23:15'])
+            ->assertViewHas('report', fn (array $report) => $report['jornadas'] === 1);
+    }
+
+    public function test_manual_close_and_default_month_follow_santiago(): void
+    {
+        $manager = $this->b12Manager();
+        $worker = app(WorkerService::class)->create($manager, new CreateWorkerCommand(
+            'P-MIDNIGHT', 'Luis', 'Invierno', new CarbonImmutable('2020-01-01', 'UTC'), null,
+        ));
+        app(HourlyRateService::class)->add($manager, new SetHourlyRateCommand(
+            $worker->id, '12.00', new CarbonImmutable('2020-01-01', 'UTC'), null,
+        ));
+
+        $this->travelTo(CarbonImmutable::parse('2026-07-15 03:30:00 UTC'));
+        $this->actingAs($manager)->post(route('attendance.start'), ['trabajador_id' => $worker->id])->assertSessionHasNoErrors();
+        $open = JornadaTrabajo::query()->firstOrFail();
+        $this->travelTo(CarbonImmutable::parse('2026-07-15 04:30:00 UTC'));
+        $this->post(route('attendance.close', $open), ['finalizada_en' => '2026-07-15T00:15'])->assertSessionHasNoErrors();
+        $this->assertDatabaseHas('jornadas_trabajo', [
+            'id' => $open->id, 'finalizada_en' => '2026-07-15 04:15:00+00', 'minutos_trabajados' => 45,
+        ]);
+        $this->get(route('personnel.pay-report', ['desde' => '2026-07-14', 'hasta' => '2026-07-14']))
+            ->assertOk()->assertSee('14/07/2026 23:30')->assertSee('15/07/2026 00:15');
+
+        $this->travelTo(CarbonImmutable::parse('2026-11-01 02:59:59 UTC'));
+        $this->get(route('personnel.pay-report'))->assertOk()->assertViewHas('filters', ['desde' => '2026-10-01', 'hasta' => '2026-10-31']);
+        $this->travelTo(CarbonImmutable::parse('2026-11-01 03:00:00 UTC'));
+        $this->get(route('personnel.pay-report'))->assertOk()->assertViewHas('filters', ['desde' => '2026-11-01', 'hasta' => '2026-11-30']);
     }
 }

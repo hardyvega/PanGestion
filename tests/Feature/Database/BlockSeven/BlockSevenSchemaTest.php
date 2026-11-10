@@ -177,6 +177,8 @@ class BlockSevenSchemaTest extends TestCase
                 'pagos_pedido_vuelto_valido_check',
             ],
             'pedidos' => [
+                'pedidos_contacto_consistente_check',
+                'pedidos_modalidad_consistente_check',
                 'pedidos_estado_valido_check',
                 'pedidos_eventos_finales_consistentes_check',
                 'pedidos_observacion_valida_check',
@@ -412,7 +414,7 @@ class BlockSevenSchemaTest extends TestCase
         ], $actual);
     }
 
-    public function test_block_seven_tables_have_no_user_defined_triggers(): void
+    public function test_order_mode_and_catalog_lines_are_protected_by_triggers(): void
     {
         $triggers = DB::select(<<<'SQL'
             SELECT tbl.relname AS table_name, trg.tgname AS trigger_name
@@ -422,9 +424,13 @@ class BlockSevenSchemaTest extends TestCase
              WHERE nsp.nspname = 'public'
                AND tbl.relname IN ('pedidos', 'detalle_pedidos', 'pagos_pedido')
                AND NOT trg.tgisinternal
+             ORDER BY tbl.relname, trg.tgname
             SQL);
 
-        $this->assertSame([], $triggers);
+        $this->assertSame([
+            ['table_name' => 'detalle_pedidos', 'trigger_name' => 'detalle_pedidos_solo_catalogo'],
+            ['table_name' => 'pedidos', 'trigger_name' => 'pedidos_modalidad_inmutable'],
+        ], array_map(static fn (object $row): array => (array) $row, $triggers));
     }
 
     public function test_block_seven_tables_have_no_user_defined_rules(): void
@@ -557,7 +563,7 @@ class BlockSevenSchemaTest extends TestCase
             ],
             'pedidos' => [
                 'id' => $this->column('int8', default: 'sequence'),
-                'cliente_id' => $this->column('int8'),
+                'cliente_id' => $this->column('int8', nullable: true),
                 'usuario_creador_id' => $this->column('int8'),
                 'estado' => $this->column('varchar', length: 20, default: "'pendiente'::character varying"),
                 'entrega_programada_en' => $this->column('timestamptz', datetimePrecision: 6, nullable: true),
@@ -567,6 +573,12 @@ class BlockSevenSchemaTest extends TestCase
                 'created_at' => $this->column('timestamptz', datetimePrecision: 6, default: 'CURRENT_TIMESTAMP'),
                 'updated_at' => $this->column('timestamptz', datetimePrecision: 6, default: 'CURRENT_TIMESTAMP'),
                 'clave_idempotencia' => $this->column('uuid', nullable: true),
+                'cliente_nombre' => $this->column('varchar', length: 150, nullable: true),
+                'cliente_telefono_cifrado' => $this->column('text', nullable: true),
+                'modalidad' => $this->column('varchar', length: 8, default: "'catalogo'::character varying"),
+                'detalle_texto' => $this->column('text', nullable: true),
+                'especificaciones_texto' => $this->column('text', nullable: true),
+                'precio_total_acordado' => $this->column('numeric', numericPrecision: 14, scale: 2, nullable: true),
             ],
         ];
     }

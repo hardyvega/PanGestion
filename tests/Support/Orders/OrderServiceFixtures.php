@@ -97,14 +97,14 @@ trait OrderServiceFixtures
         ]);
     }
 
-    protected function createOrderCashSession(User $actor, string $suffix = 'caja'): int
+    protected function createOrderCashSession(User $actor, string $suffix = 'caja', bool $principal = true): int
     {
         $token = $this->orderFixtureToken($suffix);
 
-        return $this->createCashSession(
+        return $this->createOperationalCashSession(
             $this->createCashRegister([
-                'codigo' => 'caja_'.$token,
-                'nombre' => 'Caja '.$token,
+                'codigo' => $principal ? 'principal' : 'caja_'.$token,
+                'nombre' => $principal ? 'Caja principal' : 'Caja '.$token,
             ]),
             (int) $actor->getKey(),
         );

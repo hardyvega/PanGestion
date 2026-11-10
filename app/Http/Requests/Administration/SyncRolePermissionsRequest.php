@@ -20,8 +20,20 @@ final class SyncRolePermissionsRequest extends FormRequest
     public function rules(): array
     {
         return [
+            '_editor_user_id' => ['sometimes', 'integer', Rule::in([(string) $this->user()->getAuthIdentifier()])],
             'permissions' => ['nullable', 'array'],
             'permissions.*' => ['integer', 'distinct', Rule::exists('permisos', 'id')->where(fn ($query) => $query->where('activo', true))],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            '_editor_user_id.in' => 'La cuenta activa cambió. Vuelve a abrir el rol con tu cuenta antes de guardar.',
+            'permissions.array' => 'La selección de permisos no es válida. Revisa las casillas antes de guardar.',
+            'permissions.*.integer' => 'Uno de los permisos seleccionados no es válido. Revisa la selección antes de guardar.',
+            'permissions.*.distinct' => 'La selección contiene permisos repetidos. Revisa las casillas antes de guardar.',
+            'permissions.*.exists' => 'Uno de los permisos seleccionados ya no está disponible. Revisa la selección antes de guardar.',
         ];
     }
 }

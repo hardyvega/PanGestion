@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Support\UserFacingError;
+
 use App\Data\Production\AnnulProductionCommand;
 use App\Data\Production\ConfirmProductionCommand;
 use App\Enums\PermissionCode;
@@ -127,7 +129,7 @@ final class ProductionController extends Controller
 
     private function message(Throwable $exception, string $fallback): string
     {
-        return $exception->getMessage() !== '' ? $exception->getMessage() : $fallback;
+        return UserFacingError::message($exception, $fallback);
     }
 
 

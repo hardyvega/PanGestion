@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace App\Http\Requests\Personnel;
 
 use App\Enums\PermissionCode;
+use App\Http\Requests\ValidatesCommercialTime;
 use App\Services\Authorization\EffectivePermissionResolver;
 use Illuminate\Foundation\Http\FormRequest;
 
 final class StoreHourlyRateRequest extends FormRequest
 {
+    use ValidatesCommercialTime;
+
     public function authorize(): bool
     {
         return $this->user() !== null
@@ -20,7 +23,8 @@ final class StoreHourlyRateRequest extends FormRequest
     {
         return [
             'valor_hora' => ['required', 'regex:/^[0-9]+(?:\.[0-9]{1,2})?$/'],
-            'vigente_desde' => ['required', 'date_format:Y-m-d\TH:i'],
+            'vigente_desde' => ['bail', 'required', 'string', $this->commercialTimeRule()],
+            'vigente_desde_occurrence' => ['nullable', 'in:primera,segunda'],
             'observacion' => ['nullable', 'string', 'max:1000'],
         ];
     }

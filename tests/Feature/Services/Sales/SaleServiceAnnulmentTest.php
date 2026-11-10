@@ -34,6 +34,7 @@ final class SaleServiceAnnulmentTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->travelTo(\Carbon\CarbonImmutable::parse('2026-09-24 15:00:00-03'));
 
         $this->actor = $this->createSalesActor([
             PermissionCode::SalesAnnul,

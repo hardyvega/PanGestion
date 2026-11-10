@@ -1,12 +1,12 @@
 @extends('layouts.authenticated', ['title' => 'Crear pedido | Almapan'])
 
 @section('page')
-    <section class="orders-page" data-order-create data-article-search-url="{{ route('orders.articles.search') }}" data-client-search-url="{{ route('orders.clients.search') }}">
+    @php($previous = static fn (string $key): string => is_string(old($key)) || is_int(old($key)) ? (string) old($key) : '')
+    <section class="orders-page" data-order-create>
         <header class="orders-page-header">
             <div>
                 <p class="eyebrow">Pedidos</p>
                 <h1>Crear pedido</h1>
-                <p class="orders-intro">Agrega artículos vendibles y, si corresponde, registra un anticipo.</p>
             </div>
             <a class="secondary-button inline-button" href="{{ route('orders.index') }}">Volver a pedidos</a>
         </header>
@@ -17,100 +17,90 @@
                 <ul class="form-error-list">
                     @foreach ($errors->all() as $error)<li>{{ $error }}</li>@endforeach
                 </ul>
+                <p>Vuelve a ingresar el nombre y el teléfono para continuar.</p>
             </div>
         @endif
 
         <form class="order-create-layout" method="POST" action="{{ route('orders.store') }}" data-order-form>
             @csrf
-            <input type="hidden" name="command_uuid" value="{{ $commandUuid }}" data-order-command-uuid>
-            <input type="hidden" name="client_id" value="{{ old('client_id', $initialClientId) }}" data-client-id>
+            <input type="hidden" name="command_uuid" value="{{ $commandUuid }}">
 
-            <section class="orders-panel order-builder-panel">
-                <div class="orders-panel-heading">
-                    <div>
-                        <h2>Cliente</h2>
-                        <p>El contrato actual del pedido requiere un cliente existente.</p>
+            <div class="order-detail-main">
+                <section class="orders-panel order-builder-panel" aria-labelledby="order-contact-title">
+                    <div class="orders-panel-heading"><h2 id="order-contact-title">Datos de contacto</h2></div>
+                    <div class="order-contact-fields">
+                        <label class="field-group">
+                            <span>Nombre del cliente</span>
+                            <input class="form-input" type="text" name="contact_name" maxlength="150" required>
+                        </label>
+                        <label class="field-group">
+                            <span>Teléfono de contacto</span>
+                            <input class="form-input" type="tel" name="contact_phone" maxlength="50" placeholder="+56 9 1234 5678" required>
+                        </label>
                     </div>
-                </div>
-                <div class="client-picker" data-client-picker>
+                </section>
+
+                <section class="orders-panel order-builder-panel" aria-labelledby="order-description-title">
+                    <div class="orders-panel-heading"><h2 id="order-description-title">Detalles del pedido</h2></div>
                     <label class="field-group">
-                        <span>Buscar cliente</span>
-                        <input class="form-input" type="search" data-client-search placeholder="Nombre o ID" autocomplete="off">
+                        <span>Detalle del pedido</span>
+                        <textarea class="form-input" name="description" rows="4" maxlength="2000" placeholder="Ejemplo: 1 torta de chocolate para 20 personas, 2 kuchen y 1 pie de limón" required>{{ $previous('description') }}</textarea>
                     </label>
-                    <div class="picker-results" data-client-results></div>
-                    <p class="selected-reference" data-selected-client>
-                        @php($selectedClient = collect($clients)->firstWhere('id', (int) ($initialClientId ?? 0)))
-                        {{ $selectedClient ? 'Seleccionado: '.$selectedClient['nombre'] : 'Selecciona un cliente para continuar.' }}
-                    </p>
-                </div>
+                    <label class="field-group">
+                        <span>Especificaciones del pedido <small>(opcional)</small></span>
+                        <textarea class="form-input" name="specifications" rows="3" maxlength="2000" placeholder="Ejemplo: escribir Feliz cumpleaños Martín. Sin nueces. Entregar fría.">{{ $previous('specifications') }}</textarea>
+                    </label>
+                </section>
+            </div>
 
-                <div class="orders-panel-heading order-products-heading">
-                    <div>
-                        <h2>Artículos</h2>
-                        <p>El precio se vuelve a resolver en el servidor al guardar.</p>
-                    </div>
-                </div>
-                <div class="order-search-row">
-                    <input class="form-input" type="search" data-order-article-search-input placeholder="ID, SKU, nombre o código de barras" autocomplete="off">
-                    <button class="secondary-button" type="button" data-order-article-search>Buscar</button>
-                </div>
-                <p class="field-help">También funciona con lector USB o Bluetooth que escriba el código y presione Enter.</p>
-                <div class="picker-results article-results" data-order-article-results></div>
-                <div class="order-cart-lines" data-order-cart-lines></div>
-                <div data-order-line-inputs></div>
-                <div class="empty-state empty-state-inline" data-order-cart-empty>
-                    <strong>Aún no hay artículos.</strong>
-                    <p>Busca un producto vendible para comenzar.</p>
-                </div>
-            </section>
+            <section class="orders-panel order-checkout-panel" aria-labelledby="order-checkout-title">
+                <div class="orders-panel-heading"><h2 id="order-checkout-title">Precio, entrega y pago inicial</h2></div>
+                <label class="field-group">
+                    <span>Precio total acordado</span>
+                    <input class="form-input" type="text" inputmode="numeric" name="agreed_total" maxlength="32" value="{{ $previous('agreed_total') }}" placeholder="25.000" data-order-agreed-total required>
+                    <small class="field-help">Ingresa el precio en pesos, sin centavos.</small>
+                </label>
+                <label class="field-group">
+                    <span>Fecha y hora de entrega</span>
+                    <input class="form-input" type="datetime-local" name="scheduled_delivery_at" value="{{ $previous('scheduled_delivery_at') }}" required>
+                    <small class="field-help">Hora local de Santiago.</small>
+                </label>
 
-            <aside class="orders-panel order-checkout-panel">
-                <div class="orders-panel-heading">
-                    <div>
-                        <h2>Resumen</h2>
-                        <p>La entrega descontará stock solamente cuando el pedido esté listo.</p>
-                    </div>
-                </div>
-                <div class="order-total-line"><span>Total</span><strong data-order-total>$0</strong></div>
+                <x-ui.commercial-time-occurrence field="scheduled_delivery_at" label="Hora de entrega" />
 
                 <div class="order-form-section">
-                    <h3>Anticipo opcional</h3>
-                    <p class="field-help">Requiere el permiso <code>pedidos.cobrar</code> y una sesión de caja abierta.</p>
-                    <label class="field-group">
-                        <span>Sesión de caja</span>
-                        <select class="form-input" name="cash_session_id" data-order-cash-session>
-                            <option value="">Seleccionar al registrar un anticipo</option>
-                            @foreach ($cashSessions as $session)
-                                <option value="{{ $session['id'] }}">{{ $session['nombre'] }}</option>
-                            @endforeach
-                        </select>
-                    </label>
-                    <div class="order-payment-lines" data-order-payment-lines></div>
-                    <div data-order-payment-inputs></div>
-                    <button class="secondary-button compact-button" type="button" data-add-order-payment>Agregar anticipo</button>
+                    <h3>Pago inicial <small>(opcional)</small></h3>
+                    <p class="field-help">Puedes crear el pedido sin pago inicial.</p>
+                    @if ($canCollect && $paymentMethods !== [])
+                        @if ($cashSessions === [])
+                            <p class="field-help">Para registrar un abono, debe haber una caja abierta.</p>
+                        @endif
+                        <label class="field-group">
+                            <span>Caja</span>
+                            <select class="form-input" name="cash_session_id" data-order-cash-session>
+                                <option value="">Seleccionar al registrar un abono</option>
+                                @foreach ($cashSessions as $session)
+                                    <option value="{{ $session['id'] }}" @selected($previous('cash_session_id') === (string) $session['id'] || ($previous('cash_session_id') === '' && count($cashSessions) === 1))>{{ $session['nombre'] }}</option>
+                                @endforeach
+                            </select>
+                        </label>
+                        <div class="order-payment-lines" data-order-payment-lines></div>
+                        <button class="secondary-button compact-button" type="button" data-add-order-payment @disabled($cashSessions === [])>Agregar abono</button>
+                    @endif
                 </div>
 
-                <div class="order-form-section order-schedule-section">
-                    <h3>Datos adicionales</h3>
-                    <label class="field-group">
-                        <span>Entrega programada</span>
-                        <input class="form-input" type="datetime-local" name="scheduled_delivery_at" value="{{ old('scheduled_delivery_at') }}">
-                    </label>
-                    <label class="field-group">
-                        <span>Observación del pedido</span>
-                        <textarea class="form-input" name="observation" rows="3" maxlength="2000">{{ old('observation') }}</textarea>
-                    </label>
+                <div class="order-finance-summary" aria-live="polite">
+                    <div><span>Total acordado</span><strong data-order-total>—</strong></div>
+                    <div><span>Pago inicial</span><strong data-order-paid>$0</strong></div>
+                    <div class="order-balance-row"><span>Saldo al guardar</span><strong data-order-balance>—</strong></div>
                 </div>
-
+                <p class="form-alert" data-order-form-error role="alert" hidden></p>
                 <button class="primary-button order-submit-button" type="submit" data-order-submit>Crear pedido</button>
-                <p class="field-help">El servidor validará cliente, artículos, precios, permisos, pagos e idempotencia.</p>
-            </aside>
+            </section>
         </form>
     </section>
 
     <script>
-        window.panGestionOrderArticles = @json($initialCart);
-        window.panGestionOrderLines = @json($initialLines);
         window.panGestionOrderPayments = @json($initialPayments);
         window.panGestionOrderPaymentMethods = @json($paymentMethods);
     </script>

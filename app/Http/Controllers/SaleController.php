@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Support\UserFacingError;
+
 use App\Data\Sales\CompleteSaleCommand;
 use App\Data\Sales\SaleLineData;
 use App\Data\Sales\SalePaymentData;
@@ -17,8 +19,12 @@ use App\Models\User;
 use App\Models\Venta;
 use App\Services\Articles\SellableArticleLookupService;
 use App\Services\Authorization\EffectivePermissionResolver;
+use App\Services\Cash\CashSessionGuard;
+use App\Services\Sales\RecentSalesService;
 use App\Services\Sales\SaleService;
+use App\Support\CommercialDate;
 use App\Support\Decimal;
+use App\Support\InventoryQuantity;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -35,6 +41,7 @@ final class SaleController extends Controller
         private readonly EffectivePermissionResolver $permissions,
         private readonly SellableArticleLookupService $lookup,
         private readonly SaleService $sales,
+        private readonly RecentSalesService $recentSales,
     ) {
     }
 
@@ -52,10 +59,14 @@ final class SaleController extends Controller
             ->values()
             ->all();
 
+        $cashSessions = $this->openCashSessions();
+
         return view('sales.create', [
             'user' => $user,
             'paymentMethods' => $this->activePaymentMethods(),
-            'cashSessions' => $this->openCashSessions(),
+            'cashSessions' => $cashSessions,
+            'cashSessionNotice' => $cashSessions === [] ? $this->cashSessionNotice() : null,
+            'recentSales' => $this->recentSales->current(),
             'initialCart' => $this->articlePayload($articleIds),
             'initialLines' => is_array($initialLines) ? $initialLines : [],
             'initialPayments' => old('payments', []),
@@ -93,6 +104,20 @@ final class SaleController extends Controller
         ]);
     }
 
+    public function recent(Request $request, string $session): JsonResponse
+    {
+        $this->authorizeSales($request->user());
+        $recent = $this->recentSales->current($session);
+
+        return ($recent === null
+            ? response()->json(['message' => 'La sesión de Caja principal ya no está vigente. Abre Nueva venta para consultar la jornada actual.'], 409)
+            : response()->json([
+                'html' => view('sales._recent-rows', ['rows' => $recent['rows']])->render(),
+                'collected' => $recent['collected'],
+            ]))
+            ->header('Cache-Control', 'private, no-store');
+    }
+
     public function store(CompleteSaleRequest $request): RedirectResponse
     {
         $user = $request->user();
@@ -118,12 +143,6 @@ final class SaleController extends Controller
         } catch (ModelNotFoundException $exception) {
             return back()->withInput()->withErrors([
                 'checkout' => $this->notFoundMessage($exception),
-            ]);
-        } catch (Throwable $exception) {
-            report($exception);
-
-            return back()->withInput()->withErrors([
-                'checkout' => 'No se pudo completar la venta. Verifica la sesión de caja e inténtalo nuevamente.',
             ]);
         }
 
@@ -174,7 +193,7 @@ final class SaleController extends Controller
 
         if (! in_array($sessionId, $validSessionIds, true)) {
             throw ValidationException::withMessages([
-                'cash_session_id' => 'No hay una sesión de caja disponible para realizar ventas.',
+                'cash_session_id' => $validSessionIds === [] ? $this->cashSessionNotice() : 'Selecciona una sesión de caja vigente para realizar ventas.',
             ]);
         }
 
@@ -325,6 +344,7 @@ final class SaleController extends Controller
             'codigo_barras' => $article->codigo_barras,
             'precio' => $article->precio_venta_actual === null ? null : Decimal::money((string) $article->precio_venta_actual),
             'stock' => Decimal::quantity((string) $article->stock_actual),
+            'stock_label' => InventoryQuantity::format((string) $article->stock_actual, $article->unidad_simbolo),
             'unidad_codigo' => $article->unidad_codigo,
             'unidad_simbolo' => $article->unidad_simbolo,
             'vendible' => $article->precio_venta_actual !== null,
@@ -351,10 +371,7 @@ final class SaleController extends Controller
     /** @return array<int, array<string, mixed>> */
     private function openCashSessions(): array
     {
-        return DB::table('sesiones_caja')
-            ->join('cajas', 'cajas.id', '=', 'sesiones_caja.caja_id')
-            ->whereNull('sesiones_caja.cerrada_en')
-            ->where('cajas.activo', true)
+        return CashSessionGuard::operationalRegisterQuery(CommercialDate::today())
             ->orderByDesc('sesiones_caja.abierta_en')
             ->get([
                 'sesiones_caja.id', 'sesiones_caja.caja_id', 'cajas.nombre AS caja_nombre',
@@ -369,6 +386,18 @@ final class SaleController extends Controller
             ->all();
     }
 
+    private function cashSessionNotice(): string
+    {
+        $open = CashSessionGuard::openRegisterQuery();
+        if ((clone $open)->where('sesiones_caja.fecha_operativa', '<', CommercialDate::today())->exists()) {
+            return 'No puedes completar ventas porque hay una sesión de caja anterior pendiente de cierre. Solicita a un dueño que la revise.';
+        }
+
+        return $open->exists()
+            ? 'No puedes completar ventas porque la sesión de caja no tiene una jornada vigente. Solicita a un dueño que la revise.'
+            : 'Debes abrir una sesión de caja vigente antes de cobrar.';
+    }
+
     private function authorizeSales(?User $user): void
     {
         abort_unless($user instanceof User, 401);
@@ -378,9 +407,7 @@ final class SaleController extends Controller
 
     private function domainMessage(InventoryDomainException $exception): string
     {
-        return $exception->getMessage() !== ''
-            ? $exception->getMessage()
-            : 'La venta no puede completarse con los datos actuales.';
+        return UserFacingError::message($exception, 'La venta no puede completarse con los datos actuales.');
     }
 
     private function notFoundMessage(ModelNotFoundException $exception): string

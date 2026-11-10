@@ -38,12 +38,13 @@
                     </div>
                     @if ($open)
                         <dl class="attendance-open-details">
-                            <div><dt>Inicio</dt><dd>{{ $open->iniciada_en?->setTimezone(config('app.timezone'))->format('d/m/Y H:i') }}</dd></div>
+                            <div><dt>Inicio</dt><dd>{{ \App\Support\CommercialDate::format($open->iniciada_en) }}</dd></div>
                         </dl>
                         <form method="POST" action="{{ route('attendance.close', $open) }}" class="attendance-action-form">
                             @csrf
                             @if ($canManage)
-                                <label class="field-group"><span>Cierre manual opcional</span><input class="form-input" type="datetime-local" name="finalizada_en"></label>
+                                <label class="field-group"><span>Cierre manual (hora de Santiago, opcional)</span><input class="form-input" type="datetime-local" name="finalizada_en" value="{{ old('finalizada_en') }}"></label>
+                                <x-ui.commercial-time-occurrence field="finalizada_en" label="Hora de cierre" />
                             @endif
                             <button class="primary-button" type="submit">Cerrar jornada</button>
                         </form>

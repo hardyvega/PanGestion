@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Models;
 
 use App\Enums\OrderStatus;
+use App\Support\Decimal;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -12,9 +13,15 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Pedido extends Model
 {
+    public const MODE_CATALOG = 'catalogo';
+
+    public const MODE_FREE = 'libre';
+
     protected $table = 'pedidos';
 
     protected $guarded = ['*'];
+
+    protected $hidden = ['cliente_telefono_cifrado'];
 
     protected $dateFormat = 'Y-m-d H:i:s.u';
 
@@ -22,6 +29,8 @@ class Pedido extends Model
     {
         return [
             'cliente_id' => 'integer',
+            'cliente_telefono_cifrado' => 'encrypted',
+            'precio_total_acordado' => 'decimal:2',
             'usuario_creador_id' => 'integer',
             'estado' => OrderStatus::class,
             'entrega_programada_en' => 'immutable_datetime',
@@ -31,6 +40,25 @@ class Pedido extends Model
             'created_at' => 'immutable_datetime',
             'updated_at' => 'immutable_datetime',
         ];
+    }
+
+    public function isFree(): bool
+    {
+        return $this->modalidad === self::MODE_FREE;
+    }
+
+    public function totalFrom(iterable $details): string
+    {
+        if ($this->isFree()) {
+            return $this->precio_total_acordado;
+        }
+
+        $total = '0.00';
+        foreach ($details as $detail) {
+            $total = Decimal::add($total, Decimal::multiply((string) $detail->cantidad, (string) $detail->precio_unitario, 2), 2);
+        }
+
+        return $total;
     }
 
     public function usuarioCreador(): BelongsTo

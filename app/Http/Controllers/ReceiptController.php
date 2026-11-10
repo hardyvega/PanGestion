@@ -14,7 +14,7 @@ use App\Models\RecepcionMercaderia;
 use App\Models\User;
 use App\Services\Authorization\EffectivePermissionResolver;
 use App\Services\Inventory\ReceiptService;
-use Carbon\CarbonImmutable;
+use App\Support\UserFacingError;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -50,10 +50,10 @@ final class ReceiptController extends Controller
     {
         $data = $request->validated();
         try {
-            $receipt = $this->receipts->createDraft($request->user(), (string) Str::uuid(), ReceiptOriginType::from($data['tipo_origen']), $data['proveedor_id'] ?? null, $data['usuario_aportante_id'] ?? null, $data['origen_detalle'] ?? null, $this->date($data['ocurrido_en'] ?? null), $data['motivo_ajuste_ocurrido_en'] ?? null, $data['observacion'] ?? null);
+            $receipt = $this->receipts->createDraft($request->user(), (string) Str::uuid(), ReceiptOriginType::from($data['tipo_origen']), $data['proveedor_id'] ?? null, $data['usuario_aportante_id'] ?? null, $data['origen_detalle'] ?? null, $request->commercialInstant('ocurrido_en'), $data['motivo_ajuste_ocurrido_en'] ?? null, $data['observacion'] ?? null);
             return redirect()->route('receipts.show', $receipt)->with('success', 'Borrador de recepción creado.');
         } catch (Throwable $exception) {
-            return back()->withInput()->withErrors($exception->getMessage());
+            return back()->withInput()->withErrors(UserFacingError::message($exception));
         }
     }
 
@@ -73,7 +73,7 @@ final class ReceiptController extends Controller
             $this->receipts->addLine($request->user(), (int) $recepcion->getKey(), (int) $data['articulo_id'], $data['cantidad'], $data['costo_unitario'] ?? null, $data['motivo_costo_cero'] ?? null);
             return back()->with('success', 'Línea agregada al borrador.');
         } catch (Throwable $exception) {
-            return back()->withInput()->withErrors($exception->getMessage());
+            return back()->withInput()->withErrors(UserFacingError::message($exception));
         }
     }
 
@@ -84,7 +84,7 @@ final class ReceiptController extends Controller
             $this->receipts->removeLine($request->user(), (int) $recepcion->getKey(), $detalle);
             return back()->with('success', 'Línea retirada del borrador.');
         } catch (Throwable $exception) {
-            return back()->withErrors($exception->getMessage());
+            return back()->withErrors(UserFacingError::message($exception));
         }
     }
 
@@ -96,7 +96,7 @@ final class ReceiptController extends Controller
             $this->receipts->confirm($request->user(), (int) $recepcion->getKey(), (string) ($request->input('command_uuid') ?: Str::uuid()));
             return back()->with('success', 'Recepción confirmada: stock, ledger y costo actualizado por ReceiptService.');
         } catch (Throwable $exception) {
-            return back()->withErrors($exception->getMessage());
+            return back()->withErrors(UserFacingError::message($exception));
         }
     }
 
@@ -109,13 +109,8 @@ final class ReceiptController extends Controller
             $this->receipts->annul($request->user(), (int) $recepcion->getKey(), (string) ($request->input('command_uuid') ?: Str::uuid()), $motivo);
             return back()->with('success', 'Recepción anulada mediante movimiento compensatorio.');
         } catch (Throwable $exception) {
-            return back()->withErrors($exception->getMessage());
+            return back()->withErrors(UserFacingError::message($exception));
         }
-    }
-
-    private function date(?string $value): ?CarbonImmutable
-    {
-        return $value === null || trim($value) === '' ? null : CarbonImmutable::parse($value, 'America/Santiago')->setTimezone('UTC');
     }
 
     private function authorize(?User $user, PermissionCode $permission): void

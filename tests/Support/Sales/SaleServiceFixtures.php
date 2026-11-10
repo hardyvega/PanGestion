@@ -91,7 +91,7 @@ trait SaleServiceFixtures
 
     protected function createSalesCashSession(User $actor, string $suffix = 'caja'): int
     {
-        return $this->createCashSession(
+        return $this->createOperationalCashSession(
             $this->createCashRegister([
                 'codigo' => $this->fixtureCode($suffix),
                 'nombre' => 'Caja '.$suffix,

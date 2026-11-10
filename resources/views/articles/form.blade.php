@@ -24,20 +24,30 @@
         <select class="form-input" name="categoria_articulo_id" required>
             <option value="">Selecciona una categoría</option>
             @foreach ($categories as $category)
-                <option value="{{ $category->id }}" @selected((string) old('categoria_articulo_id', $article->categoria_articulo_id ?? '') === (string) $category->id)>{{ $category->nombre }}</option>
+                <option value="{{ $category->id }}" @selected((string) old('categoria_articulo_id', $article->categoria_articulo_id ?? '') === (string) $category->id)>{{ $category->nombre }}{{ $category->activo ? '' : ' (inactiva, asignada)' }}</option>
             @endforeach
         </select>
         @error('categoria_articulo_id') <small class="field-error">{{ $message }}</small> @enderror
+        @if ($categories->isEmpty())
+            <small class="field-help">No hay categorías disponibles. Crea una categoría antes de registrar artículos. @can('articulos.gestionar')<a class="text-button" href="{{ route('catalog.categories.create') }}">Crear categoría</a>@endcan</small>
+        @elseif ($editing && ! $article->categoria?->activo)
+            <small class="field-help">La categoría asignada está inactiva. Puedes conservarla o seleccionar una activa.</small>
+        @endif
     </label>
     <label class="field-group">
         <span>Unidad de medida</span>
         <select class="form-input" name="unidad_id" required>
             <option value="">Selecciona una unidad</option>
             @foreach ($units as $unit)
-                <option value="{{ $unit->id }}" @selected((string) old('unidad_id', $article->unidad_id ?? '') === (string) $unit->id)>{{ $unit->nombre }} ({{ $unit->simbolo }})</option>
+                <option value="{{ $unit->id }}" @selected((string) old('unidad_id', $article->unidad_id ?? '') === (string) $unit->id)>{{ $unit->nombre }} ({{ $unit->simbolo }}){{ $unit->activo ? '' : ' (inactiva, asignada)' }}</option>
             @endforeach
         </select>
         @error('unidad_id') <small class="field-error">{{ $message }}</small> @enderror
+        @if ($units->isEmpty())
+            <small class="field-help">No hay unidades de medida disponibles. Crea una unidad antes de registrar artículos. @can('articulos.gestionar')<a class="text-button" href="{{ route('catalog.units.create') }}">Crear unidad de medida</a>@endcan</small>
+        @elseif ($editing && ! $article->unidad?->activo)
+            <small class="field-help">La unidad asignada está inactiva. Puedes conservarla o seleccionar una activa.</small>
+        @endif
     </label>
     <label class="field-group">
         <span>Código de barras</span>

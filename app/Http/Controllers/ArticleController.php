@@ -134,7 +134,7 @@ final class ArticleController extends Controller
         $this->authorize($user, PermissionCode::ArticlesManage);
 
         return view('articles.edit', [
-            ...$this->formData($user),
+            ...$this->formData($user, $articulo),
             'article' => $articulo->load(['categoria', 'unidad']),
             'imageUrl' => $articulo->imagen_ruta === null ? null : Storage::disk('public')->url($articulo->imagen_ruta),
         ]);
@@ -171,12 +171,24 @@ final class ArticleController extends Controller
     }
 
     /** @return array<string, mixed> */
-    private function formData(User $user): array
+    private function formData(User $user, ?Articulo $article = null): array
     {
+        $categories = $this->categories();
+        $units = UnidadMedida::query()->where('activo', true)->orderBy('nombre')->orderBy('id')->get();
+        if ($article !== null) {
+            $article->loadMissing(['categoria', 'unidad']);
+            if ($article->categoria !== null && ! $categories->contains('id', $article->categoria_articulo_id)) {
+                $categories->push($article->categoria);
+            }
+            if ($article->unidad !== null && ! $units->contains('id', $article->unidad_id)) {
+                $units->push($article->unidad);
+            }
+        }
+
         return [
             'user' => $user,
-            'categories' => $this->categories(),
-            'units' => UnidadMedida::query()->where('activo', true)->orderBy('nombre')->orderBy('id')->get(),
+            'categories' => $categories,
+            'units' => $units,
             'types' => self::TYPES,
         ];
     }

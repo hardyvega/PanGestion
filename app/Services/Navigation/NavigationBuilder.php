@@ -10,9 +10,7 @@ use App\Services\Authorization\EffectivePermissionResolver;
 
 final class NavigationBuilder
 {
-    public function __construct(private readonly EffectivePermissionResolver $permissions)
-    {
-    }
+    public function __construct(private readonly EffectivePermissionResolver $permissions) {}
 
     /** @return array<int, array{label: string, items: array<int, array<string, mixed>>}> */
     public function forUser(User $user): array
@@ -49,9 +47,11 @@ final class NavigationBuilder
         $add('Producción', 'Producción', '◎', 'productions.index', [PermissionCode::ProductionView], 'productions.*');
         $add('Producción', 'Recetas', '◫', 'recipes.index', [PermissionCode::RecipesView], 'recipes.*');
         $add('Catálogo', 'Artículos', '▤', 'articles.index', [PermissionCode::ArticlesView], 'articles.*');
+        $add('Catálogo', 'Categorías', '☷', 'catalog.categories.index', [PermissionCode::ArticlesManage], 'catalog.categories.*');
+        $add('Catálogo', 'Unidades de medida', '▦', 'catalog.units.index', [PermissionCode::ArticlesManage], 'catalog.units.*');
         $add('Catálogo', 'Proveedores', '◇', 'suppliers.index', [PermissionCode::SuppliersView], 'suppliers.*');
 
-        $add('Caja', 'Sesiones e historial', '$', 'cash.index', [PermissionCode::CashSessionsView, PermissionCode::CashSessionsOpen, PermissionCode::CashSessionsClose, PermissionCode::CashMovementsView, PermissionCode::CashManualMovementsManage]);
+        $add('Caja', 'Sesiones e historial', '$', 'cash.index', [PermissionCode::CashSessionsView, PermissionCode::CashSessionsOpen, PermissionCode::CashSessionsClose, PermissionCode::CashMovementsView, PermissionCode::CashManualMovementsManage, PermissionCode::CashFundsAuthorize]);
         $add('Caja', 'Movimientos de caja', '↗', 'cash.movements', [PermissionCode::CashMovementsView]);
 
         $add('Personal', 'Trabajadores', '◎', 'personnel.index', [PermissionCode::PersonnelView], ['personnel.index', 'personnel.create', 'personnel.show', 'personnel.edit']);

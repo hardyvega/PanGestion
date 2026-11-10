@@ -3,7 +3,7 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "test:frontend": "node --test tests/Frontend/private-page.test.cjs",
+        "test:frontend": "node --test tests/Frontend/*.test.cjs",
         "build": "vite build",
         "dev": "vite"
     },

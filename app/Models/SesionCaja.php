@@ -7,6 +7,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class SesionCaja extends Model
 {
@@ -20,6 +21,8 @@ class SesionCaja extends Model
     {
         return [
             'caja_id' => 'integer',
+            'fondo_autorizado_id' => 'integer',
+            'fecha_operativa' => 'immutable_date',
             'usuario_apertura_id' => 'integer',
             'usuario_cierre_id' => 'integer',
             'monto_inicial' => 'decimal:2',
@@ -35,6 +38,16 @@ class SesionCaja extends Model
     public function caja(): BelongsTo
     {
         return $this->belongsTo(Caja::class, 'caja_id');
+    }
+
+    public function fondoAutorizado(): BelongsTo
+    {
+        return $this->belongsTo(FondoCajaAutorizado::class, 'fondo_autorizado_id');
+    }
+
+    public function cierre(): HasOne
+    {
+        return $this->hasOne(CierreCaja::class, 'sesion_caja_id');
     }
 
     public function usuarioApertura(): BelongsTo

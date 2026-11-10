@@ -40,6 +40,7 @@ final class SaleServiceCompletionTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->travelTo(CarbonImmutable::parse('2026-09-24 15:00:00-03'));
 
         $this->actor = $this->createSalesActor([
             PermissionCode::SalesCreate,
@@ -372,12 +373,15 @@ final class SaleServiceCompletionTest extends TestCase
             price: '1.00',
         );
 
+        $this->travelTo(CarbonImmutable::parse('2026-09-24 23:30:00-03'));
         $first = $this->service()->complete($this->actor, $this->commandFor(
             $articleId,
             'e1000000-0000-4000-8000-000000000010',
             '1.00',
             completedAt: CarbonImmutable::parse('2026-09-24 23:30:00-03'),
         ));
+        $this->travelTo(CarbonImmutable::parse('2026-09-25 00:30:00-03'));
+        $this->cashSessionId = $this->createSalesCashSession($this->actor, 'segunda_jornada');
         $second = $this->service()->complete($this->actor, $this->commandFor(
             $articleId,
             'e1000000-0000-4000-8000-000000000011',

@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Services\Articles;
 
 use App\Models\Articulo;
+use App\Models\CategoriaArticulo;
+use App\Models\UnidadMedida;
 use App\Models\User;
 use App\Enums\PermissionCode;
 use App\Services\Authorization\EffectivePermissionResolver;
@@ -12,6 +14,7 @@ use App\Support\Decimal;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 use Throwable;
 
 final class ArticleAdministrationService
@@ -29,6 +32,7 @@ final class ArticleAdministrationService
 
         try {
             return DB::transaction(function () use ($actor, $data, &$storedPath): Articulo {
+                $this->lockCatalogReferences($data);
                 $price = $this->nullableMoney($data['precio_venta'] ?? null);
                 $storedPath = $this->storeImage($data['imagen'] ?? null);
 
@@ -73,6 +77,7 @@ final class ArticleAdministrationService
         try {
             $updated = DB::transaction(function () use ($actor, $article, $data, &$newPath, &$oldPath): Articulo {
                 $locked = Articulo::query()->whereKey($article->getKey())->lockForUpdate()->firstOrFail();
+                $this->lockCatalogReferences($data, $locked);
                 $oldPath = $locked->imagen_ruta;
                 $newPath = $this->storeImage($data['imagen'] ?? null);
                 $nextPath = $newPath ?? ((bool) ($data['quitar_imagen'] ?? false) ? null : $oldPath);
@@ -141,6 +146,16 @@ final class ArticleAdministrationService
 
             return $locked->fresh(['categoria', 'unidad']);
         });
+    }
+
+    private function lockCatalogReferences(array $data, ?Articulo $article = null): void
+    {
+        foreach (['categoria_articulo_id' => CategoriaArticulo::class, 'unidad_id' => UnidadMedida::class] as $field => $model) {
+            $entry = $model::query()->whereKey((int) ($data[$field] ?? 0))->lockForUpdate()->first();
+            if ($entry === null || (! $entry->activo && ($article === null || (int) $article->{$field} !== (int) $entry->getKey()))) {
+                throw ValidationException::withMessages([$field => 'La categoría o unidad seleccionada no existe o ya no está disponible.']);
+            }
+        }
     }
 
     private function appendPriceHistory(

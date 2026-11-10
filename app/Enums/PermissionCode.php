@@ -42,6 +42,7 @@ enum PermissionCode: string
     case CashSessionsView = 'caja.sesiones.ver';
     case CashSessionsOpen = 'caja.sesiones.abrir';
     case CashSessionsClose = 'caja.sesiones.cerrar';
+    case CashFundsAuthorize = 'caja.fondos.autorizar';
     case CashMovementsView = 'caja.movimientos.ver';
     case CashManualMovementsManage = 'caja.movimientos.gestionar';
     case ProductionConfirm = 'produccion.confirmar';
@@ -106,6 +107,7 @@ enum PermissionCode: string
             self::CashSessionsView => 'Ver sesiones de caja',
             self::CashSessionsOpen => 'Abrir sesiones de caja',
             self::CashSessionsClose => 'Cerrar sesiones de caja',
+            self::CashFundsAuthorize => 'Autorizar fondos de caja',
             self::CashMovementsView => 'Ver movimientos de caja',
             self::CashManualMovementsManage => 'Gestionar movimientos manuales de caja',
             self::ProductionConfirm => 'Confirmar produccion',
@@ -165,8 +167,9 @@ enum PermissionCode: string
             self::OrdersDeliver => 'Permite entregar pedidos y registrar su transicion operacional.',
             self::OrdersCollect => 'Permite cobrar pedidos mediante pagos asociados.',
             self::CashSessionsView => 'Permite consultar sesiones, montos y cierres historicos de caja.',
-            self::CashSessionsOpen => 'Permite abrir una sesion de caja con un monto inicial valido.',
+            self::CashSessionsOpen => 'Permite abrir una sesion de caja con el fondo previamente autorizado para su fecha operativa.',
             self::CashSessionsClose => 'Permite cerrar sesiones de caja registrando monto declarado y calculo teorico.',
+            self::CashFundsAuthorize => 'Permite autorizar el primer fondo y el fondo de la proxima jornada al confirmar un cierre.',
             self::CashMovementsView => 'Permite consultar movimientos de caja y su causalidad operacional.',
             self::CashManualMovementsManage => 'Permite gestionar movimientos manuales de caja trazables.',
             self::ProductionConfirm => 'Permite confirmar producciones y sus movimientos de inventario.',
@@ -198,6 +201,7 @@ enum PermissionCode: string
             self::InventoryAdjustmentsRetroactive,
             self::InventoryWasteRetroactive,
             self::InventoryDailyStockRecalculate => 'elevado',
+            self::CashFundsAuthorize => 'elevado',
             self::PersonnelManage,
             self::HourlyRatesView,
             self::HourlyRatesManage,

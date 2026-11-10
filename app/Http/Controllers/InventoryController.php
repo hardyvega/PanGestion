@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Enums\PermissionCode;
+use App\Http\Requests\Inventory\FilterInventoryMovementsRequest;
 use App\Http\Requests\Inventory\StoreAdjustmentRequest;
 use App\Http\Requests\Inventory\StoreCountRequest;
 use App\Http\Requests\Inventory\StoreWasteRequest;
@@ -16,7 +17,11 @@ use App\Services\Inventory\CountService;
 use App\Services\Inventory\InventoryAdjustmentService;
 use App\Services\Inventory\WasteService;
 use App\Support\Decimal;
+use App\Support\CommercialDate;
+use App\Support\UserFacingError;
 use Carbon\CarbonImmutable;
+use Illuminate\Database\Query\Builder;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -55,8 +60,13 @@ final class InventoryController extends Controller
         }
 
         $articles = $query->orderBy('nombre')->orderBy('id')->paginate(15)->withQueryString();
-        $recentMovements = DB::table('movimientos_inventario')->whereDate('ocurrido_en', '>=', now()->subDays(7))->count();
-        $recentReceipts = DB::table('recepciones_mercaderia')->whereDate('created_at', '>=', now()->subDays(7))->count();
+        $today = CommercialDate::today();
+        $firstDay = CarbonImmutable::parse($today, 'UTC')->subDays(6)->toDateString();
+        $recentRange = CommercialDate::utcRange($firstDay, $today);
+        $recentMovements = DB::table('movimientos_inventario')->where('ocurrido_en', '>=', $recentRange['start'])
+            ->where('ocurrido_en', '<', $recentRange['end'])->count();
+        $recentReceipts = DB::table('recepciones_mercaderia')->where('created_at', '>=', $recentRange['start'])
+            ->where('created_at', '<', $recentRange['end'])->count();
 
         return view('inventory.index', [
             ...$this->pageData($user),
@@ -82,13 +92,16 @@ final class InventoryController extends Controller
         $receipts = DB::table('detalle_recepciones_mercaderia as d')
             ->join('recepciones_mercaderia as r', 'r.id', '=', 'd.recepcion_mercaderia_id')
             ->where('d.articulo_id', $articleId)->orderByDesc('r.ocurrido_en')->limit(20)
-            ->get(['r.id', 'r.estado', 'r.ocurrido_en', 'r.tipo_origen', 'd.cantidad', 'd.costo_unitario']);
+            ->get(['r.id', 'r.estado', 'r.ocurrido_en', 'r.tipo_origen', 'd.cantidad', 'd.costo_unitario', 'd.unidad_simbolo_snapshot']);
         $wastes = DB::table('mermas')->where('articulo_id', $articleId)->orderByDesc('ocurrido_en')->limit(20)->get();
         $counts = DB::table('detalle_conteos_inventario as d')
             ->join('conteos_inventario as c', 'c.id', '=', 'd.conteo_inventario_id')
             ->where('d.articulo_id', $articleId)->orderByDesc('c.created_at')->limit(20)
-            ->get(['c.id', 'c.estado', 'c.created_at', 'd.cantidad_contada', 'd.stock_teorico_snapshot']);
-        $daily = DB::table('stock_diario')->where('articulo_id', $articleId)->orderByDesc('fecha_comercial')->limit(20)->get();
+            ->get(['c.id', 'c.estado', 'c.created_at', 'd.cantidad_contada', 'd.stock_teorico_snapshot', 'd.unidad_simbolo_snapshot']);
+        $daily = DB::table('stock_diario as s')
+            ->leftJoin('movimientos_inventario as m', 'm.id', '=', 's.ultimo_movimiento_id')
+            ->where('s.articulo_id', $articleId)->orderByDesc('s.fecha_comercial')->limit(20)
+            ->get(['s.*', 'm.unidad_simbolo_snapshot']);
         $canCosts = $this->permissions->allows($user, PermissionCode::InventoryCostsView);
         $costs = $canCosts ? DB::table('historial_costos_articulo')->where('articulo_id', $articleId)->orderByDesc('vigente_desde')->limit(20)->get() : collect();
 
@@ -99,39 +112,78 @@ final class InventoryController extends Controller
         ]);
     }
 
-    public function movements(Request $request): View
+    public function movements(FilterInventoryMovementsRequest $request): View
     {
-        $user = $request->user();
-        $this->authorize($user, PermissionCode::InventoryMovementsView);
+        $filters = $request->validated();
+        $term = trim($filters['q'] ?? '');
         $query = DB::table('movimientos_inventario as m')->join('articulos as a', 'a.id', '=', 'm.articulo_id');
-        if (is_numeric($request->query('articulo_id'))) $query->where('m.articulo_id', (int) $request->query('articulo_id'));
-        if ($request->filled('tipo')) $query->where('m.tipo_movimiento', $request->query('tipo'));
-        if ($request->filled('desde')) $query->whereDate('m.ocurrido_en', '>=', $request->query('desde'));
-        if ($request->filled('hasta')) $query->whereDate('m.ocurrido_en', '<=', $request->query('hasta'));
-        $movements = $query->orderByDesc('m.ocurrido_en')->orderByDesc('m.id')->paginate(25)->withQueryString();
+        $selectedArticle = null;
+        if (isset($filters['articulo_id'])) {
+            $query->where('m.articulo_id', $filters['articulo_id']);
+            $selectedArticle = DB::table('articulos')->where('id', $filters['articulo_id'])->value('nombre');
+        } elseif ($term !== '') {
+            $this->matchMovementArticles($query, $term);
+        }
+        if (isset($filters['tipo'])) $query->where('m.tipo_movimiento', $filters['tipo']);
+        if (isset($filters['desde'])) {
+            $query->where('m.ocurrido_en', '>=', CommercialDate::utcRange($filters['desde'])['start']);
+        }
+        if (isset($filters['hasta'])) {
+            $query->where('m.ocurrido_en', '<', CommercialDate::utcRange($filters['hasta'])['end']);
+        }
+        $movements = $query->orderByDesc('m.ocurrido_en')->orderByDesc('m.id')->paginate(25)->appends($filters);
         $types = DB::table('movimientos_inventario')->select('tipo_movimiento')->distinct()->orderBy('tipo_movimiento')->pluck('tipo_movimiento');
 
-        return view('inventory.movements', [...$this->pageData($user), 'movements' => $movements, 'types' => $types, 'filters' => $request->only(['articulo_id', 'tipo', 'desde', 'hasta'])]);
+        return view('inventory.movements', [
+            ...$this->pageData($request->user()), 'movements' => $movements, 'types' => $types,
+            'filters' => $filters, 'articleSearch' => $selectedArticle ?? $term,
+        ]);
+    }
+
+    public function movementArticleSuggestions(FilterInventoryMovementsRequest $request): JsonResponse
+    {
+        $term = trim($request->validated('q') ?? '');
+        $articles = [];
+        if (mb_strlen($term) >= 2) {
+            $query = DB::table('articulos as a');
+            $this->matchMovementArticles($query, $term);
+            $articles = $query
+                ->orderByRaw('CASE WHEN lower(a.sku) = lower(?) OR lower(a.codigo_barras) = lower(?) THEN 0 ELSE 1 END', [$term, $term])
+                ->orderBy('a.nombre')->orderBy('a.id')
+                ->limit(12)->get(['a.id', 'a.nombre', 'a.sku'])
+                ->map(static fn ($article) => ['id' => (string) $article->id, 'nombre' => $article->nombre, 'sku' => $article->sku]);
+        }
+
+        return response()->json(['data' => $articles])->header('Cache-Control', 'private, no-store');
+    }
+
+    private function matchMovementArticles(Builder $query, string $term): void
+    {
+        $pattern = '%'.addcslashes($term, '\\%_').'%';
+        $query->where(static fn (Builder $article) => $article
+            ->where('a.nombre', 'ilike', $pattern)
+            ->orWhere('a.sku', 'ilike', $pattern)
+            ->orWhere('a.codigo_barras', 'ilike', $pattern));
     }
 
     public function adjustmentCreate(Request $request): View
     {
         $user = $request->user();
         $this->authorizeAny($user, [PermissionCode::InventoryAdjustmentsInput, PermissionCode::InventoryAdjustmentsOutput]);
-        return view('inventory.adjustment', [...$this->pageData($user), 'articles' => $this->activeArticles(), 'canInput' => $this->permissions->allows($user, PermissionCode::InventoryAdjustmentsInput), 'canOutput' => $this->permissions->allows($user, PermissionCode::InventoryAdjustmentsOutput)]);
+        return view('inventory.adjustment', [...$this->pageData($user), 'articles' => $this->activeArticles(['codigo_barras']), 'canInput' => $this->permissions->allows($user, PermissionCode::InventoryAdjustmentsInput), 'canOutput' => $this->permissions->allows($user, PermissionCode::InventoryAdjustmentsOutput)]);
     }
 
     public function adjustmentStore(StoreAdjustmentRequest $request): RedirectResponse
     {
         $data = $request->validated();
-        $occurredAt = $this->date($data['ocurrido_en'] ?? null);
+        $occurredAt = $request->commercialInstant('ocurrido_en');
         try {
             $movement = $data['tipo'] === 'entrada'
                 ? $this->adjustments->manualEntry($request->user(), (int) $data['articulo_id'], $data['cantidad'], (string) Str::uuid(), $data['motivo'], $occurredAt)
                 : $this->adjustments->manualExit($request->user(), (int) $data['articulo_id'], $data['cantidad'], (string) Str::uuid(), $data['motivo'], $occurredAt);
             return redirect()->route('inventory.movements')->with('success', 'Ajuste registrado. Movimiento #'.$movement->getKey().'.');
         } catch (Throwable $exception) {
-            return back()->withInput()->withErrors($exception->getMessage());
+            return back()->withInput()->withErrors(UserFacingError::message($exception));
         }
     }
 
@@ -159,7 +211,7 @@ final class InventoryController extends Controller
             $count = $this->counts->create($request->user(), (string) Str::uuid(), $lines, $data['observacion'] ?? null);
             return redirect()->route('inventory.counts')->with('success', 'Conteo #'.$count->id.' creado en borrador.');
         } catch (Throwable $exception) {
-            return back()->withInput()->withErrors($exception->getMessage());
+            return back()->withInput()->withErrors(UserFacingError::message($exception));
         }
     }
 
@@ -170,7 +222,7 @@ final class InventoryController extends Controller
             $this->counts->confirm($request->user(), $conteo, (string) Str::uuid());
             return back()->with('success', 'Conteo aplicado mediante el servicio de inventario.');
         } catch (Throwable $exception) {
-            return back()->withErrors($exception->getMessage());
+            return back()->withErrors(UserFacingError::message($exception));
         }
     }
 
@@ -193,21 +245,16 @@ final class InventoryController extends Controller
     {
         $data = $request->validated();
         try {
-            $this->wastes->record($request->user(), (int) $data['articulo_id'], $data['cantidad'], (string) Str::uuid(), $data['motivo'], $this->date($data['ocurrido_en'] ?? null));
+            $this->wastes->record($request->user(), (int) $data['articulo_id'], $data['cantidad'], (string) Str::uuid(), $data['motivo'], $request->commercialInstant('ocurrido_en'));
             return redirect()->route('inventory.wastes')->with('success', 'Merma registrada con trazabilidad.');
         } catch (Throwable $exception) {
-            return back()->withInput()->withErrors($exception->getMessage());
+            return back()->withInput()->withErrors(UserFacingError::message($exception));
         }
     }
 
-    private function activeArticles()
+    private function activeArticles(array $extraColumns = [])
     {
-        return Articulo::query()->with('unidad')->where('activo', true)->orderBy('nombre')->orderBy('id')->get(['id', 'sku', 'nombre', 'stock_actual', 'stock_minimo', 'unidad_id']);
-    }
-
-    private function date(?string $value): ?CarbonImmutable
-    {
-        return $value === null || trim($value) === '' ? null : CarbonImmutable::parse($value, 'America/Santiago')->setTimezone('UTC');
+        return Articulo::query()->with('unidad')->where('activo', true)->orderBy('nombre')->orderBy('id')->get(['id', 'sku', 'nombre', 'stock_actual', 'stock_minimo', 'unidad_id', ...$extraColumns]);
     }
 
     private function authorize(?User $user, PermissionCode $permission): void

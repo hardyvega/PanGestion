@@ -34,6 +34,16 @@ class StoreArticleRequest extends FormRequest
         ];
     }
 
+    public function messages(): array
+    {
+        return [
+            'categoria_articulo_id.required' => 'Selecciona una categoría antes de guardar el artículo.',
+            'categoria_articulo_id.exists' => 'La categoría seleccionada no existe o no está disponible.',
+            'unidad_id.required' => 'Selecciona una unidad de medida antes de guardar el artículo.',
+            'unidad_id.exists' => 'La unidad de medida seleccionada no existe o no está disponible.',
+        ];
+    }
+
     protected function prepareForValidation(): void
     {
         $this->merge([

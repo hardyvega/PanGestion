@@ -1,7 +1,8 @@
 @extends('layouts.authenticated', ['title' => 'Detalle de artículo | Almapan'])
+@use('App\Support\InventoryQuantity')
 
 @section('page')
-    <section class="articles-page" aria-labelledby="article-show-title">
+    <section class="articles-page article-detail-page" aria-labelledby="article-show-title">
         <header class="articles-page-header">
             <div><p class="eyebrow">{{ $article->activo ? 'Artículo activo' : 'Artículo inactivo' }}</p><h1 id="article-show-title">{{ $article->nombre }}</h1><p class="articles-intro">SKU {{ $article->sku }}</p></div>
             <div class="article-header-actions">
@@ -21,8 +22,8 @@
                         <div><dt>Categoría</dt><dd>{{ $article->categoria?->nombre ?? 'Sin categoría' }}</dd></div>
                         <div><dt>Unidad</dt><dd>{{ $article->unidad?->nombre ?? 'Sin unidad' }}</dd></div>
                         <div><dt>Código de barras</dt><dd>{{ $article->codigo_barras ?: 'Sin código' }}</dd></div>
-                        <div><dt>Stock actual</dt><dd>{{ $article->stock_actual }} <small>Solo lectura</small></dd></div>
-                        <div><dt>Stock mínimo</dt><dd>{{ $article->stock_minimo }}</dd></div>
+                        <div><dt>Stock actual</dt><dd>{{ InventoryQuantity::format((string) $article->stock_actual, $article->unidad?->simbolo) }} <small>Solo lectura</small></dd></div>
+                        <div><dt>Stock mínimo</dt><dd>{{ InventoryQuantity::format((string) $article->stock_minimo, $article->unidad?->simbolo) }}</dd></div>
                         <div><dt>Precio vigente</dt><dd>{{ $article->precio_venta_actual !== null ? '$'.number_format((float) $article->precio_venta_actual, 2, ',', '.') : 'Sin precio' }}</dd></div>
                     </dl>
                     @if ($article->descripcion)<div class="article-description"><dt>Descripción</dt><p>{{ $article->descripcion }}</p></div>@endif

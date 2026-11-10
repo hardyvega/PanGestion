@@ -78,6 +78,7 @@ final class ArticleWebTest extends TestCase
         $response->assertRedirect(route('articles.show', $articleId));
         $this->assertDatabaseHas('articulos', [
             'id' => $articleId,
+            'codigo_barras' => '00000999',
             'stock_actual' => '0.000',
             'stock_minimo' => '3.500',
             'precio_venta_actual' => '1500.00',
@@ -88,6 +89,7 @@ final class ArticleWebTest extends TestCase
             'precio_nuevo' => '1500.00',
             'usuario_id' => $actor->getKey(),
         ]);
+        $this->assertDatabaseCount('articulos', 1);
         $this->assertDatabaseCount('movimientos_inventario', 0);
     }
 
@@ -122,6 +124,8 @@ final class ArticleWebTest extends TestCase
 
         $response->assertRedirect(route('articles.show', $articleId));
         $this->assertSame('7.250', DB::table('articulos')->where('id', $articleId)->value('stock_actual'));
+        $this->assertSame('00000012', DB::table('articulos')->where('id', $articleId)->value('codigo_barras'));
+        $this->assertDatabaseCount('articulos', 1);
         $this->assertSame(0, DB::table('movimientos_inventario')->count());
         $this->assertDatabaseHas('historial_precios_venta', [
             'articulo_id' => $articleId,
@@ -170,6 +174,56 @@ final class ArticleWebTest extends TestCase
             'stock_minimo' => '0.000',
             'imagen' => UploadedFile::fake()->create('pan.svg', 10, 'image/svg+xml'),
         ])->assertRedirect('/articulos/crear')->assertSessionHasErrors('imagen');
+    }
+
+    public function test_both_article_forms_enable_the_scoped_scanner_guard_and_keep_native_validation(): void
+    {
+        $actor = $this->createActor([PermissionCode::ArticlesManage], 'article_scanner');
+        $category = $this->createCategory('scanner_category');
+        $unit = $this->createUnit('scanner_unit');
+        $articleId = $this->createArticle($category, $unit, ['codigo_barras' => '0001234567890']);
+
+        foreach (['/articulos/crear' => 'Crear artículo', '/articulos/'.$articleId.'/editar' => 'Guardar cambios'] as $url => $label) {
+            $this->actingAs($actor)->get($url)->assertOk()
+                ->assertSee('enctype="multipart/form-data" data-article-form', false)
+                ->assertSee('type="text" name="codigo_barras"', false)
+                ->assertSee('name="_token"', false)
+                ->assertSee('maxlength="50" required', false)
+                ->assertSee('type="submit">'.$label, false)
+                ->assertDontSee('novalidate', false);
+        }
+
+        $this->get('/articulos/'.$articleId.'/editar')->assertSee('value="0001234567890"', false);
+        $this->assertDatabaseCount('articulos', 1);
+        $this->assertDatabaseCount('movimientos_inventario', 0);
+    }
+
+    public function test_validation_preserves_scanned_text_and_does_not_create_or_update_articles(): void
+    {
+        $actor = $this->createActor([PermissionCode::ArticlesManage], 'article_scan_invalid');
+        $category = $this->createCategory('scan_invalid_category');
+        $unit = $this->createUnit('scan_invalid_unit');
+        $articleId = $this->createArticle($category, $unit, ['codigo_barras' => 'original-barcode']);
+        $payload = [
+            'sku' => 'scan_invalid', 'nombre' => '', 'tipo_articulo' => 'reventa',
+            'categoria_articulo_id' => $category, 'unidad_id' => $unit,
+            'codigo_barras' => '0007501013118056', 'stock_minimo' => '0.000',
+        ];
+
+        $this->actingAs($actor)->from('/articulos/crear')->post('/articulos', $payload)
+            ->assertRedirect('/articulos/crear')->assertSessionHasErrors('nombre')
+            ->assertSessionHasInput('codigo_barras', '0007501013118056');
+        $this->get('/articulos/crear')->assertSee('value="0007501013118056"', false);
+
+        $edit = '/articulos/'.$articleId.'/editar';
+        $this->from($edit)->put('/articulos/'.$articleId, $payload)
+            ->assertRedirect($edit)->assertSessionHasErrors('nombre')
+            ->assertSessionHasInput('codigo_barras', '0007501013118056');
+        $this->get($edit)->assertSee('value="0007501013118056"', false);
+        $this->assertDatabaseCount('articulos', 1);
+        $this->assertDatabaseHas('articulos', ['id' => $articleId, 'codigo_barras' => 'original-barcode']);
+        $this->assertDatabaseCount('movimientos_inventario', 0);
+        $this->assertDatabaseCount('historial_precios_venta', 0);
     }
 
     private function createActor(array $permissions, string $suffix): User

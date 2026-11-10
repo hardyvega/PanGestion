@@ -1,7 +1,7 @@
 @extends('layouts.authenticated', ['title' => 'Roles | Almapan'])
 
 @section('page')
-    <section class="admin-page" aria-labelledby="roles-title">
+    <section class="admin-page role-administration-page" aria-labelledby="roles-title">
         <header class="admin-page-header"><div><p class="eyebrow">Administración</p><h1 id="roles-title">Roles</h1><p class="admin-intro">Organiza capacidades por rol sin autorizar por nombre.</p></div>@if ($canManage)<a class="primary-button inline-button" href="{{ route('admin.roles.create') }}">Nuevo rol</a>@endif</header>
         @if (session('success'))<div class="form-alert form-alert-success" role="status">{{ session('success') }}</div>@endif
         @if ($errors->has('operacion'))<div class="form-alert" role="alert">{{ $errors->first('operacion') }}</div>@endif

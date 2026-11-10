@@ -26,4 +26,9 @@ class Caja extends Model
     {
         return $this->hasMany(SesionCaja::class, 'caja_id');
     }
+
+    public function fondosAutorizados(): HasMany
+    {
+        return $this->hasMany(FondoCajaAutorizado::class);
+    }
 }

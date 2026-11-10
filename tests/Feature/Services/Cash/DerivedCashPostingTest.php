@@ -76,6 +76,7 @@ final class DerivedCashPostingTest extends TestCase
 
     public function test_cash_sale_annulment_creates_one_causal_cash_egress_for_the_refund(): void
     {
+        $this->travelTo(\Carbon\CarbonImmutable::parse('2026-09-24 15:00:00-03'));
         $actor = $this->createCashPostingActor([PermissionCode::SalesAnnul]);
         $context = $this->createPostingContext($actor, affectsCash: true);
         $fixture = $this->createHistoricalCashSale($actor, $context);
@@ -104,7 +105,7 @@ final class DerivedCashPostingTest extends TestCase
             PermissionCode::OrdersCreate,
             PermissionCode::OrdersCollect,
         ]);
-        $context = $this->createPostingContext($actor, affectsCash: true);
+        $context = $this->createPostingContext($actor, affectsCash: true, principal: true);
         $order = $this->orders()->create($actor, new CreateOrderCommand(
             $this->cashPostingUuid(15),
             $context['clientId'],
@@ -133,7 +134,7 @@ final class DerivedCashPostingTest extends TestCase
             PermissionCode::OrdersCreate,
             PermissionCode::OrdersCollect,
         ]);
-        $context = $this->createPostingContext($actor, affectsCash: false);
+        $context = $this->createPostingContext($actor, affectsCash: false, principal: true);
         $order = $this->orders()->create($actor, new CreateOrderCommand(
             $this->cashPostingUuid(17),
             $context['clientId'],

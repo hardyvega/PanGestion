@@ -53,7 +53,7 @@ trait DerivedCashPostingFixtures
         return User::query()->findOrFail($userId);
     }
 
-    protected function createPostingContext(User $actor, bool $affectsCash): array
+    protected function createPostingContext(User $actor, bool $affectsCash, bool $principal = false): array
     {
         $token = $this->cashPostingToken($affectsCash ? 'efectivo' : 'no_efectivo');
         $categoryId = $this->createArticleCategory([
@@ -79,10 +79,10 @@ trait DerivedCashPostingFixtures
             'nombre' => 'Metodo caja R8 '.$token,
             'afecta_efectivo' => $affectsCash,
         ]);
-        $cashSessionId = $this->createCashSession(
+        $cashSessionId = $this->createOperationalCashSession(
             $this->createCashRegister([
-                'codigo' => 'r8_'.$token.'_caja',
-                'nombre' => 'Caja caja R8 '.$token,
+                'codigo' => $principal ? 'principal' : 'r8_'.$token.'_caja',
+                'nombre' => $principal ? 'Caja principal' : 'Caja caja R8 '.$token,
             ]),
             (int) $actor->getKey(),
         );

@@ -26,6 +26,10 @@
                     <p>Ingresa para continuar con tu jornada.</p>
                 </div>
 
+                @if (session('permission_session_notice'))
+                    <div class="form-alert" role="alert">{{ session('permission_session_notice') }}</div>
+                @endif
+
                 @if ($errors->any())
                     <div class="form-alert" role="alert" aria-live="polite">
                         Revisa los datos ingresados para continuar.
