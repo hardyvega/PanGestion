@@ -13,6 +13,7 @@ final readonly class DeliverOrderCommand
         public int $orderId,
         string $commandUuid,
         public ?OrderPaymentData $finalPayment = null,
+        public ?int $expectedCashSessionId = null,
     ) {
         if ($orderId < 1) {
             throw new InvalidArgumentException('orderId debe ser un entero positivo.');

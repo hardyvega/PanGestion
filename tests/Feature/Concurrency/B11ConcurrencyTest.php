@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Concurrency;
 
+use App\Data\Orders\CreateOrderCommand;
+use App\Data\Orders\FreeOrderData;
+use App\Data\Orders\OrderContact;
 use App\Enums\InventoryMovementType;
 use App\Enums\PaymentType;
 use App\Enums\PermissionCode;
@@ -16,6 +19,7 @@ use App\Exceptions\Inventory\IdempotencyConflictException;
 use App\Exceptions\Inventory\InsufficientStockException;
 use App\Exceptions\Inventory\InventoryDomainException;
 use App\Models\User;
+use App\Services\Orders\OrderService;
 use App\Services\Production\ProductionService;
 use App\Services\Sales\SaleService;
 use Carbon\CarbonImmutable;
@@ -183,6 +187,44 @@ final class B11ConcurrencyTest extends TestCase
         $this->assertSame(1, DB::table('transiciones_pedido')->where('pedido_id', $fixture['orderId'])->where('estado_nuevo', 'entregado')->count());
     }
 
+    public function test_concurrent_free_order_delivery_records_one_sale_and_one_final_payment(): void
+    {
+        $actor = $this->concurrencyActor([PermissionCode::OrdersCreate, PermissionCode::OrdersDeliver, PermissionCode::OrdersCollect], 'encargo');
+        $register = $this->createCashRegister(['codigo' => 'principal', 'nombre' => 'Caja principal']);
+        $session = $this->createOperationalCashSession($register, (int) $actor->id);
+        $cash = $this->createPaymentMethod(['codigo' => 'efectivo', 'nombre' => 'Efectivo', 'afecta_efectivo' => true]);
+        $order = app(OrderService::class)->create($actor, new CreateOrderCommand(
+            $this->concurrencyUuid(), null, [], scheduledDeliveryAt: CarbonImmutable::now()->addDay(),
+            contact: new OrderContact('Cliente de prueba', '9 1234-5678'),
+            freeOrder: new FreeOrderData('Encargo de prueba', null, '10.000'),
+        ));
+        DB::table('pedidos')->where('id', $order->id)->update(['estado' => 'listo']);
+        $payload = [
+            'actor_id' => (int) $actor->id,
+            'order_id' => (int) $order->id,
+            'command_uuid' => $this->concurrencyUuid(),
+            'final_payment' => [
+                'payment_method_id' => $cash,
+                'type' => PaymentType::Charge->value,
+                'amount' => '10000.00',
+                'cash_session_id' => $session,
+                'command_uuid' => $this->concurrencyUuid(),
+                'received_amount' => '10000.00',
+                'change' => '0.00',
+            ],
+        ];
+        $results = ProcessRace::run('delivery', [$payload, $payload]);
+
+        $this->assertCount(2, array_filter($results, static fn (array $result): bool => $result['ok'] === true));
+        $this->assertDatabaseHas('ventas', ['pedido_id' => $order->id, 'total' => '10000.00', 'sesion_caja_id' => $session]);
+        $this->assertDatabaseCount('ventas', 1);
+        $this->assertDatabaseCount('pagos_pedido', 1);
+        $this->assertDatabaseCount('movimientos_caja', 1);
+        $this->assertDatabaseCount('detalle_ventas', 0);
+        $this->assertDatabaseCount('movimientos_inventario', 0);
+        $this->assertSame(1, DB::table('transiciones_pedido')->where('pedido_id', $order->id)->where('estado_nuevo', 'entregado')->count());
+    }
+
     public function test_same_sale_annulment_uuid_reverses_sale_and_cash_once_under_real_race(): void
     {
         $actor = $this->concurrencyActor([PermissionCode::SalesCreate, PermissionCode::SalesAnnul], 'anulacion_venta');
@@ -202,9 +244,6 @@ final class B11ConcurrencyTest extends TestCase
                 '0.00',
                 null,
             )],
-            null,
-            null,
-            CarbonImmutable::parse('2026-10-15 12:00:00-03:00'),
         ));
         $annulment = [
             'actor_id' => (int) $actor->getKey(),
@@ -317,7 +356,7 @@ final class B11ConcurrencyTest extends TestCase
             'stock_actual' => $stock,
             'activo' => true,
         ]);
-        $cashSessionId = $this->createCashSession(
+        $cashSessionId = $this->createOperationalCashSession(
             $this->createCashRegister(['codigo' => 'ab_'.$token.'_caja', 'nombre' => 'Caja AB '.$token]),
             (int) $actor->getKey(),
         );
@@ -347,7 +386,6 @@ final class B11ConcurrencyTest extends TestCase
                 'received_amount' => $amount,
                 'change' => '0.00',
             ]],
-            'completed_at' => '2026-10-15 12:00:00-03:00',
         ];
     }
 
@@ -370,7 +408,6 @@ final class B11ConcurrencyTest extends TestCase
                 'cash_session_id' => $fixture['cashSessionId'],
                 'command_uuid' => $uuid,
             ]],
-            'completed_at' => '2026-10-15 12:01:00-03:00',
         ];
     }
 

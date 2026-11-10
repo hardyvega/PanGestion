@@ -23,8 +23,10 @@
         <form class="personnel-filter-grid" method="POST" action="{{ route('attendance.manual.store') }}">
             @csrf
             <label class="field-group"><span>Trabajador</span><select class="form-input" name="trabajador_id" required><option value="">Selecciona</option>@foreach ($workers as $worker)<option value="{{ $worker->id }}">{{ $worker->nombres }} {{ $worker->apellidos }} · {{ $worker->codigo }}</option>@endforeach</select></label>
-            <label class="field-group"><span>Inicio</span><input class="form-input" type="datetime-local" name="iniciada_en" required></label>
-            <label class="field-group"><span>Término</span><input class="form-input" type="datetime-local" name="finalizada_en" required></label>
+            <label class="field-group"><span>Inicio (hora de Santiago)</span><input class="form-input" type="datetime-local" name="iniciada_en" value="{{ old('iniciada_en') }}" required></label>
+            <x-ui.commercial-time-occurrence field="iniciada_en" label="Hora de inicio" />
+            <label class="field-group"><span>Término (hora de Santiago)</span><input class="form-input" type="datetime-local" name="finalizada_en" value="{{ old('finalizada_en') }}" required></label>
+            <x-ui.commercial-time-occurrence field="finalizada_en" label="Hora de término" />
             <button class="primary-button" type="submit">Registrar jornada</button>
         </form>
     </section>
@@ -40,7 +42,7 @@
             @forelse ($sessions as $session)
                 <tr>
                     <td data-label="Trabajador"><strong>{{ $session->trabajador->nombres }} {{ $session->trabajador->apellidos }}</strong><small>{{ $session->trabajador->codigo }}</small></td>
-                    <td data-label="Inicio / término">{{ $session->iniciada_en?->setTimezone(config('app.timezone'))->format('d/m/Y H:i') }}<small>{{ $session->finalizada_en?->setTimezone(config('app.timezone'))->format('d/m/Y H:i') ?? 'Abierta' }}</small></td>
+                    <td data-label="Inicio / término">{{ \App\Support\CommercialDate::format($session->iniciada_en) }}<small>{{ \App\Support\CommercialDate::format($session->finalizada_en) ?? 'Abierta' }}</small></td>
                     <td data-label="Estado"><span class="personnel-status {{ $session->estado === \App\Enums\AttendanceStatus::Open ? 'personnel-status-open' : '' }}">{{ $session->estado->value }}</span></td>
                     <td data-label="Pago operacional">{{ $session->monto_calculado !== null ? '$'.number_format((float) $session->monto_calculado, 2, ',', '.') : '—' }}<small>{{ $session->minutos_trabajados ?? '—' }} minutos</small></td>
                     <td data-label="Acciones"><div class="personnel-row-actions">

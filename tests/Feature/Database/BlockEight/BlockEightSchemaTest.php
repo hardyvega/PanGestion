@@ -215,7 +215,7 @@ class BlockEightSchemaTest extends TestCase
             $this->assertSame($names, $actual[$table], "Unexpected CHECK constraints for {$table}.");
         }
 
-        $this->assertCount(25, $definitions);
+        $this->assertCount(24, $definitions);
 
         foreach ($this->expectedCheckFragments() as $constraint => $fragments) {
             $this->assertArrayHasKey($constraint, $definitions);
@@ -420,7 +420,7 @@ class BlockEightSchemaTest extends TestCase
         $this->assertCount(11, $actual);
     }
 
-    public function test_block_eight_tables_have_no_user_defined_triggers(): void
+    public function test_only_derived_sale_contact_trigger_is_installed(): void
     {
         $triggers = DB::select(<<<'SQL'
             SELECT tbl.relname AS table_name, trg.tgname AS trigger_name
@@ -434,7 +434,7 @@ class BlockEightSchemaTest extends TestCase
                AND NOT trg.tgisinternal
             SQL);
 
-        $this->assertSame([], $triggers);
+        $this->assertSame([['table_name' => 'ventas', 'trigger_name' => 'ventas_contacto_pedido_check']], array_map(static fn (object $row): array => (array) $row, $triggers));
     }
 
     public function test_block_eight_tables_have_no_user_defined_rules(): void
@@ -570,7 +570,6 @@ class BlockEightSchemaTest extends TestCase
                 'ventas_motivo_anulacion_valido_check',
                 'ventas_numero_diario_positivo_check',
                 'ventas_observacion_valida_check',
-                'ventas_origen_pedido_consistente_check',
                 'ventas_total_valido_check',
             ],
             'detalle_ventas' => [
@@ -608,7 +607,6 @@ class BlockEightSchemaTest extends TestCase
                 'monto_anticipo_aplicado >= 0', "monto_anticipo_aplicado <> 'NaN'",
                 'monto_anticipo_aplicado <= total', 'pedido_id IS NOT NULL', 'monto_anticipo_aplicado = 0',
             ],
-            'ventas_origen_pedido_consistente_check' => ['pedido_id IS NULL', 'cliente_id IS NOT NULL'],
             'ventas_anulacion_consistente_check' => [
                 "estado = 'completada'", 'anulada_en IS NULL', 'usuario_anulador_id IS NULL',
                 'motivo_anulacion IS NULL',

@@ -54,6 +54,7 @@ class BootstrapAdminCommandTest extends TestCase
         $this->assertTrue(Gate::forUser($user)->allows(PermissionCode::SalesCreate->value));
         $this->assertTrue(Gate::forUser($user)->allows(PermissionCode::ArticlesView->value));
         $this->assertTrue(Gate::forUser($user)->allows(PermissionCode::ArticlesManage->value));
+        $this->assertTrue(Gate::forUser($user)->allows(PermissionCode::CashFundsAuthorize->value));
     }
 
     public function test_bootstrap_does_not_assign_inactive_permissions(): void

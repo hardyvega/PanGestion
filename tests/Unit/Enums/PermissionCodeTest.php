@@ -46,6 +46,7 @@ final class PermissionCodeTest extends TestCase
         'caja.sesiones.ver',
         'caja.sesiones.abrir',
         'caja.sesiones.cerrar',
+        'caja.fondos.autorizar',
         'caja.movimientos.ver',
         'caja.movimientos.gestionar',
         'produccion.confirmar',
@@ -68,6 +69,7 @@ final class PermissionCodeTest extends TestCase
     ];
 
     private const ELEVATED = [
+        'caja.fondos.autorizar',
         'inventario.recepciones.origen_otro',
         'inventario.recepciones.retroactivas',
         'inventario.saldo_inicial.ejecutar',
@@ -81,7 +83,7 @@ final class PermissionCodeTest extends TestCase
         'asistencia.gestionar',
     ];
 
-    public function test_enum_contains_exactly_the_fifty_five_approved_codes(): void
+    public function test_enum_contains_exactly_the_fifty_six_approved_codes(): void
     {
         $actual = array_map(
             static fn (PermissionCode $permission): string => $permission->value,
@@ -92,7 +94,7 @@ final class PermissionCodeTest extends TestCase
         sort($expected);
 
         $this->assertSame($expected, $actual);
-        $this->assertCount(55, $actual);
+        $this->assertCount(56, $actual);
     }
 
     public function test_every_permission_round_trips_its_backed_code(): void
@@ -114,7 +116,7 @@ final class PermissionCodeTest extends TestCase
         }
     }
 
-    public function test_permission_levels_are_exactly_forty_four_ordinary_and_eleven_elevated(): void
+    public function test_permission_levels_are_exactly_forty_four_ordinary_and_twelve_elevated(): void
     {
         $ordinary = [];
         $elevated = [];
@@ -131,7 +133,7 @@ final class PermissionCodeTest extends TestCase
         sort($expectedElevated);
 
         $this->assertCount(44, $ordinary);
-        $this->assertCount(11, $elevated);
+        $this->assertCount(12, $elevated);
         $this->assertSame($expectedElevated, $elevated);
     }
 }

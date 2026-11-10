@@ -11,10 +11,14 @@ use App\Data\Sales\CompleteSaleCommand;
 use App\Data\Sales\SaleLineData;
 use App\Data\Sales\SalePaymentData;
 use App\Enums\PaymentType;
+use App\Models\MovimientoCaja;
 use App\Models\User;
+use App\Services\Cash\CashFundService;
+use App\Services\Cash\CashService;
 use App\Services\Orders\OrderService;
 use App\Services\Production\ProductionService;
 use App\Services\Sales\SaleService;
+use Carbon\Carbon;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Support\Facades\DB;
@@ -45,9 +49,24 @@ while (! is_file($input['go_file'])) {
 
 try {
     $payload = $input['payload'];
+    if ($input['scenario'] === 'cash_operate') {
+        CarbonImmutable::setTestNow(CarbonImmutable::parse($payload['clock']));
+        Carbon::setTestNow(CarbonImmutable::parse($payload['clock']));
+    }
     $actor = User::query()->findOrFail((int) $payload['actor_id']);
 
     $result = match ($input['scenario']) {
+        'cash_operate' => match ($payload['action']) {
+            'authorize_opening' => app(CashFundService::class)->authorizeOpening($actor, (int) $payload['register_id'], $payload['date'], $payload['amount'], $payload['reason'], $payload['uuid']),
+            'raw_movement' => tap((new MovimientoCaja)->forceFill([
+                'sesion_caja_id' => (int) $payload['session_id'], 'usuario_id' => $actor->id,
+                'tipo_movimiento' => 'ingreso', 'monto' => '1', 'concepto' => 'Ingreso concurrente directo', 'ocurrido_en' => now('UTC'),
+            ]), static fn ($movement) => $movement->save()),
+            'open' => app(CashService::class)->open($actor, (int) $payload['register_id'], (int) $payload['fund_id'], $payload['date'], $payload['uuid']),
+            'close' => app(CashService::class)->close($actor, (int) $payload['session_id'], $payload['counted'], $payload['next_fund'], $payload['next_date'], $payload['uuid'], true, null, $payload['expected']),
+            'movement' => app(CashService::class)->registerManualMovement($actor, (int) $payload['session_id'], 'ingreso', '1', 'Ingreso concurrente'),
+            default => throw new InvalidArgumentException('Accion de caja desconocida.'),
+        },
         'sale' => app(SaleService::class)->complete(
             $actor,
             new CompleteSaleCommand(

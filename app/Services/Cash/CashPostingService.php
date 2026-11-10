@@ -6,7 +6,9 @@ namespace App\Services\Cash;
 
 use App\Exceptions\Inventory\IdempotencyConflictException;
 use App\Exceptions\Inventory\InventoryDomainException;
+use App\Support\CommercialDate;
 use App\Support\Decimal;
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
 
@@ -14,12 +16,12 @@ final class CashPostingService
 {
     public function postSalePayment(int $paymentId): void
     {
-        $this->post('pagos_venta', 'pago_venta_id', $paymentId);
+        DB::transaction(fn () => $this->post('pagos_venta', 'pago_venta_id', $paymentId));
     }
 
     public function postOrderPayment(int $paymentId): void
     {
-        $this->post('pagos_pedido', 'pago_pedido_id', $paymentId);
+        DB::transaction(fn () => $this->post('pagos_pedido', 'pago_pedido_id', $paymentId));
     }
 
     private function post(string $paymentTable, string $causalColumn, int $paymentId): void
@@ -38,11 +40,7 @@ final class CashPostingService
             ]);
 
         if ($payment === null) {
-            throw (new ModelNotFoundException())->setModel($paymentTable, [$paymentId]);
-        }
-
-        if (! (bool) $payment->afecta_efectivo) {
-            return;
+            throw (new ModelNotFoundException)->setModel($paymentTable, [$paymentId]);
         }
 
         $movementType = $payment->tipo === 'devolucion' ? 'egreso' : 'ingreso';
@@ -59,6 +57,18 @@ final class CashPostingService
                 throw new IdempotencyConflictException('El movimiento de caja causal no coincide con el pago.');
             }
 
+            return;
+        }
+
+        $session = DB::table('sesiones_caja')->where('id', $payment->sesion_caja_id)->lockForUpdate()->first();
+        if ($session === null) {
+            throw (new ModelNotFoundException)->setModel('sesiones_caja', [$payment->sesion_caja_id]);
+        }
+        CashSessionGuard::assertOpen($session);
+        if (($session->fecha_operativa ?? null) !== null && CommercialDate::fromInstant(CarbonImmutable::parse($payment->ocurrido_en)) !== $session->fecha_operativa) {
+            throw new InventoryDomainException('El pago no corresponde a la fecha operativa de la sesión.');
+        }
+        if (! (bool) $payment->afecta_efectivo) {
             return;
         }
 

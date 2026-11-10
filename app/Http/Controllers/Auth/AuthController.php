@@ -36,7 +36,8 @@ final class AuthController extends Controller
                 ->withErrors([
                     'nombre_usuario' => 'Demasiados intentos. Espera un momento y vuelve a intentarlo.',
                 ])
-                ->setStatusCode(429);
+                ->setStatusCode(429)
+                ->setContent(view('auth.login', ['errors' => $request->session()->get('errors')])->render());
         }
 
         $user = User::query()

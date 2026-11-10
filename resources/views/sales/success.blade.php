@@ -2,10 +2,14 @@
 
 @section('page')
     <section class="sale-success-page" aria-labelledby="sale-success-title">
-        <div class="sale-success-mark" aria-hidden="true">✓</div>
-        <p class="eyebrow">Venta completada</p>
-        <h1 id="sale-success-title">Venta realizada</h1>
-        <p class="sale-success-number">N.º {{ $sale->numero_diario }} · {{ $sale->fecha_comercial->format('d/m/Y') }}</p>
+        <header class="sale-success-header">
+            <span class="sale-success-mark" aria-hidden="true">✓</span>
+            <div>
+                <p class="eyebrow">Venta completada</p>
+                <h1 id="sale-success-title">Venta realizada</h1>
+                <p class="sale-success-number">N.º {{ $sale->numero_diario }} · {{ $sale->fecha_comercial->format('d/m/Y') }}</p>
+            </div>
+        </header>
 
         <div class="sale-success-summary">
             <span>Total</span>

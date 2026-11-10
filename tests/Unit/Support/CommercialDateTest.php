@@ -6,6 +6,7 @@ namespace Tests\Unit\Support;
 
 use App\Support\CommercialDate;
 use Carbon\CarbonImmutable;
+use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -88,5 +89,25 @@ final class CommercialDateTest extends TestCase
         $this->assertSame('2026-09-06T04:00:00+00:00', $range['start']->format('Y-m-d\TH:i:sP'));
         $this->assertSame('2026-09-07T03:00:00+00:00', $range['end']->format('Y-m-d\TH:i:sP'));
         $this->assertSame(82800, $range['end']->getTimestamp() - $range['start']->getTimestamp());
+    }
+
+    public function test_local_time_resolves_both_occurrences_without_merging_instants(): void
+    {
+        $first = CommercialDate::parseLocal('2026-04-04T23:30', 'primera');
+        $second = CommercialDate::parseLocal('2026-04-04T23:30', 'segunda');
+
+        $this->assertSame('2026-04-05T02:30:00+00:00', $first->format(DATE_ATOM));
+        $this->assertSame('2026-04-05T03:30:00+00:00', $second->format(DATE_ATOM));
+        $this->assertSame('04/04/2026 23:30', CommercialDate::format($first));
+        $this->assertSame('04/04/2026 23:30', CommercialDate::format($second));
+        $this->expectException(InvalidArgumentException::class);
+        CommercialDate::parseLocal('2026-04-04T23:30');
+    }
+
+    public function test_local_time_rejects_a_spring_gap(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Esta hora no existe en Santiago');
+        CommercialDate::parseLocal('2026-09-06T00:30');
     }
 }

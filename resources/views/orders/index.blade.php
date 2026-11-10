@@ -53,16 +53,16 @@
                         </select>
                     </label>
                     <label class="field-group">
-                        <span>Desde</span>
+                        <span>Creado desde</span>
                         <input class="form-input" type="date" name="date_from" value="{{ $filters['date_from'] ?? '' }}">
                     </label>
                     <label class="field-group">
-                        <span>Hasta</span>
+                        <span>Creado hasta</span>
                         <input class="form-input" type="date" name="date_until" value="{{ $filters['date_until'] ?? '' }}">
                     </label>
                     <label class="field-group orders-filter-search">
-                        <span>Pedido, cliente o artículo</span>
-                        <input class="form-input" type="search" name="q" value="{{ $filters['q'] ?? '' }}" placeholder="ID, nombre o SKU">
+                        <span>Pedido, cliente o detalle</span>
+                        <input class="form-input" type="search" name="q" value="{{ is_string($filters['q'] ?? null) ? $filters['q'] : '' }}" placeholder="Número, nombre o descripción">
                     </label>
                     <button class="secondary-button filter-submit" type="submit">Aplicar filtros</button>
                 </div>
@@ -71,29 +71,34 @@
             @if ($orders->isEmpty())
                 <div class="empty-state empty-state-inline">
                     <strong>{{ request()->hasAny(['status', 'date_from', 'date_until', 'q']) ? 'No se encontraron pedidos con estos filtros.' : 'No hay pedidos registrados.' }}</strong>
-                    <p>Los pedidos nuevos aparecerán aquí con su estado y trazabilidad.</p>
+                    <p>Aquí podrás revisar el estado y la fecha de entrega de cada pedido.</p>
                 </div>
             @else
                 <div class="orders-list" aria-label="Listado de pedidos">
                     @foreach ($orders as $order)
-                        @php($summaryData = $orderSummaries[$order->getKey()] ?? ['total' => '0.00', 'paid' => '0.00', 'balance' => '0.00'])
+                        @php($summaryData = $orderSummaries[$order->getKey()])
                         <a class="order-card" href="{{ route('orders.show', $order) }}">
                             <div class="order-card-main">
                                 <div class="order-card-titleline">
                                     <strong>Pedido #{{ $order->getKey() }}</strong>
                                     <span class="order-status-badge order-status-{{ $order->estado->value }}">{{ ucfirst(str_replace('_', ' ', $order->estado->value)) }}</span>
                                 </div>
-                                <span class="order-card-client">{{ $order->cliente?->nombre ?? 'Cliente no disponible' }}</span>
-                                <small>{{ $order->created_at?->format('d/m/Y H:i') }} · {{ $order->detalles->count() }} línea(s)</small>
+                                <span class="order-card-client">{{ $order->cliente_nombre ?? $order->cliente?->nombre ?? 'Cliente no disponible' }}</span>
+                                @if ($order->isFree())
+                                    <span class="order-description-preview">{{ \Illuminate\Support\Str::limit(\Illuminate\Support\Str::squish($order->detalle_texto), 120) }}</span>
+                                @else
+                                    <small>{{ $order->detalles->count() }} línea(s) de artículos</small>
+                                @endif
+                                @if ($order->entrega_programada_en)
+                                    <small>Entrega {{ $order->entrega_programada_en->setTimezone('America/Santiago')->format('d/m/Y H:i') }}</small>
+                                @endif
                             </div>
                             <div class="order-card-finance">
                                 <span>Total</span>
-                                <strong>{{ \App\Support\Money::clp((string) $summaryData['total']) }}</strong>
-                                @if ($summaryData['balance'] !== '0.00')
-                                    <small>Saldo {{ \App\Support\Money::clp((string) $summaryData['balance']) }}</small>
-                                @else
-                                    <small class="paid-note">Pagado</small>
-                                @endif
+                                <strong>{{ \App\Support\Money::clpTotal($summaryData['total']) }}</strong>
+                                <small>Pagado {{ \App\Support\Money::clpTotal($summaryData['paid']) }}</small>
+                                <small>Saldo {{ \App\Support\Money::clpTotal($summaryData['balance']) }}</small>
+                                <small @class(['paid-note' => $summaryData['paymentStatus'] === 'Pagado'])>{{ $summaryData['paymentStatus'] }}</small>
                             </div>
                             <span class="order-card-arrow" aria-hidden="true">→</span>
                         </a>

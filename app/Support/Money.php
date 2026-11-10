@@ -12,12 +12,21 @@ final class Money
 
     public static function clp(string $amount): string
     {
-        $normalized = Decimal::money($amount);
+        return self::formatClp(Decimal::money($amount));
+    }
+
+    public static function clpTotal(string $amount): string
+    {
+        return self::formatClp(Decimal::normalize($amount, 2), includeCents: true);
+    }
+
+    private static function formatClp(string $normalized, bool $includeCents = false): string
+    {
         $negative = str_starts_with($normalized, '-');
         $unsigned = $negative ? substr($normalized, 1) : $normalized;
-        [$integer] = explode('.', $unsigned, 2);
+        [$integer, $cents] = explode('.', $unsigned, 2);
         $grouped = preg_replace('/\B(?=(\d{3})+(?!\d))/', '.', $integer);
 
-        return ($negative ? '-$' : '$').$grouped;
+        return ($negative ? '-$' : '$').$grouped.($includeCents && $cents !== '00' ? ','.$cents : '');
     }
 }

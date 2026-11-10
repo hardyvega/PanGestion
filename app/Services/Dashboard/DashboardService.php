@@ -31,11 +31,16 @@ final class DashboardService
         }
 
         $today = CommercialDate::today();
-        $todayDate = CarbonImmutable::createFromFormat('!Y-m-d', $today, 'America/Santiago');
-        $weekStart = $todayDate->startOfWeek(CarbonInterface::MONDAY)->format('Y-m-d');
-        $monthStart = $todayDate->startOfMonth()->format('Y-m-d');
-
         $salesToday = $this->salesSummary($today, $today);
+        $salesWeek = $salesMonth = null;
+
+        if ($this->permissions->allows($user, PermissionCode::CashSessionsView)) {
+            $todayDate = CarbonImmutable::createFromFormat('!Y-m-d', $today, 'America/Santiago');
+            $weekStart = $todayDate->startOfWeek(CarbonInterface::MONDAY)->format('Y-m-d');
+            $monthStart = $todayDate->startOfMonth()->format('Y-m-d');
+            $salesWeek = $this->salesSummary($weekStart, $today)['amount'];
+            $salesMonth = $this->salesSummary($monthStart, $today)['amount'];
+        }
 
         return new DashboardMetrics(
             canViewFinancials: true,
@@ -43,8 +48,8 @@ final class DashboardService
             salesTodayCount: $salesToday['count'],
             cashToday: $this->paymentNet('efectivo', CommercialDate::utcRange($today)),
             debitToday: $this->paymentNet('debito', CommercialDate::utcRange($today)),
-            salesWeek: $this->salesSummary($weekStart, $today)['amount'],
-            salesMonth: $this->salesSummary($monthStart, $today)['amount'],
+            salesWeek: $salesWeek,
+            salesMonth: $salesMonth,
         );
     }
 
@@ -95,9 +100,7 @@ final class DashboardService
     private function orderPaymentNet(string $paymentMethodCode, array $range): string
     {
         $amount = DB::table('pagos_pedido AS pagos')
-            ->join('ventas', 'ventas.pedido_id', '=', 'pagos.pedido_id')
             ->join('metodos_pago AS metodos', 'metodos.id', '=', 'pagos.metodo_pago_id')
-            ->whereNotNull('ventas.pedido_id')
             ->where('metodos.codigo', $paymentMethodCode)
             ->where('pagos.ocurrido_en', '>=', $range['start'])
             ->where('pagos.ocurrido_en', '<', $range['end'])

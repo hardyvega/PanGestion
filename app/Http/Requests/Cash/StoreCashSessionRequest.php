@@ -20,7 +20,10 @@ final class StoreCashSessionRequest extends FormRequest
     {
         return [
             'caja_id' => ['required', 'integer', 'exists:cajas,id'],
-            'monto_inicial' => ['required', 'regex:/^[0-9]+(?:\.[0-9]{1,2})?$/'],
+            'monto_inicial' => ['prohibited'],
+            'fondo_autorizado_id' => ['required', 'integer', 'exists:fondos_caja_autorizados,id'],
+            'fecha_operativa' => ['required', 'date_format:Y-m-d'],
+            'clave_idempotencia' => ['required', 'uuid'],
         ];
     }
 }

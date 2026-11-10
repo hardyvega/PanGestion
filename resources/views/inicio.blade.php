@@ -13,20 +13,22 @@
             </div>
         </div>
 
-        <div class="period-toolbar" aria-label="Periodo de referencia">
-            <span class="period-toolbar-label">Vista</span>
-            <div class="period-options" role="group" aria-label="Seleccionar periodo">
-                @foreach (['hoy' => 'Hoy', 'semana' => 'Esta semana', 'mes' => 'Este mes'] as $periodKey => $periodLabel)
-                    <a class="period-option{{ $selectedPeriod === $periodKey ? ' is-active' : '' }}" href="{{ route('inicio', ['period' => $periodKey]) }}" @if ($selectedPeriod === $periodKey) aria-current="page" @endif>
-                        {{ $periodLabel }}
-                    </a>
-                @endforeach
+        @if ($metrics->hasPeriodTotals())
+            <div class="period-toolbar" aria-label="Periodo de referencia">
+                <span class="period-toolbar-label">Vista</span>
+                <div class="period-options" role="group" aria-label="Seleccionar periodo">
+                    @foreach (['hoy' => 'Hoy', 'semana' => 'Esta semana', 'mes' => 'Este mes'] as $periodKey => $periodLabel)
+                        <a class="period-option{{ $selectedPeriod === $periodKey ? ' is-active' : '' }}" href="{{ route('inicio', ['period' => $periodKey]) }}" @if ($selectedPeriod === $periodKey) aria-current="page" @endif>
+                            {{ $periodLabel }}
+                        </a>
+                    @endforeach
+                </div>
+                <span class="period-context">Resumen actualizado</span>
             </div>
-            <span class="period-context">Resumen actualizado</span>
-        </div>
+        @endif
 
         @if ($metrics->canViewFinancials)
-            <section class="metric-grid" aria-label="Métricas principales">
+            <section @class(['metric-grid', 'metric-grid-daily' => ! $metrics->hasPeriodTotals()]) aria-label="Métricas principales">
                 @include('components.dashboard.metric-card', [
                     'label' => 'Ventas de hoy',
                     'value' => \App\Support\Money::clp($metrics->salesToday),
@@ -51,22 +53,24 @@
                     'tone' => 'sage',
                     'icon' => '↗',
                 ])
-                @include('components.dashboard.metric-card', [
-                    'label' => 'Ventas de esta semana',
-                    'value' => \App\Support\Money::clp($metrics->salesWeek),
-                    'detail' => 'Desde el lunes comercial',
-                    'period' => 'Semana',
-                    'tone' => 'coffee',
-                    'icon' => '7',
-                ])
-                @include('components.dashboard.metric-card', [
-                    'label' => 'Ventas de este mes',
-                    'value' => \App\Support\Money::clp($metrics->salesMonth),
-                    'detail' => 'Acumulado del mes actual',
-                    'period' => 'Mes',
-                    'tone' => 'plum',
-                    'icon' => 'M',
-                ])
+                @if ($metrics->hasPeriodTotals())
+                    @include('components.dashboard.metric-card', [
+                        'label' => 'Ventas de esta semana',
+                        'value' => \App\Support\Money::clp($metrics->salesWeek),
+                        'detail' => 'Desde el lunes comercial',
+                        'period' => 'Semana',
+                        'tone' => 'coffee',
+                        'icon' => '7',
+                    ])
+                    @include('components.dashboard.metric-card', [
+                        'label' => 'Ventas de este mes',
+                        'value' => \App\Support\Money::clp($metrics->salesMonth),
+                        'detail' => 'Acumulado del mes actual',
+                        'period' => 'Mes',
+                        'tone' => 'plum',
+                        'icon' => 'M',
+                    ])
+                @endif
             </section>
         @else
             <section class="dashboard-access-panel" aria-label="Acceso a métricas">

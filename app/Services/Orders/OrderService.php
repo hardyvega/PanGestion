@@ -21,18 +21,21 @@ use App\Models\Pedido;
 use App\Models\User;
 use App\Services\Authorization\EffectivePermissionResolver;
 use App\Services\Cash\CashPostingService;
+use App\Services\Cash\CashSessionGuard;
 use App\Services\Inventory\InventoryLockManager;
 use App\Services\Inventory\InventoryStockService;
+use App\Services\Inventory\LockedArticleSet;
 use App\Services\Inventory\StockDailyRebuilder;
 use App\Services\Sales\SaleCorrelativeAllocator;
-use App\Support\Decimal;
 use App\Support\CommercialDate;
+use App\Support\Decimal;
 use App\Support\PostgresUniqueViolation;
 use Carbon\CarbonImmutable;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 
 final class OrderService
@@ -68,21 +71,25 @@ final class OrderService
             }
 
             $this->assertPaymentUuidAvailability($command->payments);
-            $client = DB::table('clientes')->where('id', $command->clientId)->first();
-
-            if ($client === null) {
+            if ($command->clientId !== null && ! DB::table('clientes')->where('id', $command->clientId)->exists()) {
                 throw (new ModelNotFoundException())->setModel('clientes', [$command->clientId]);
             }
 
-            $articles = $this->loadArticlesForLines($command);
-            $total = $this->orderTotal($command);
-            $this->lockPaymentSessions($command->payments, true);
+            $articles = $command->freeOrder === null ? $this->loadArticlesForLines($command) : collect();
+            $total = $command->freeOrder?->total ?? $this->orderTotal($command);
+            $this->lockPrincipalPaymentSessions($command->payments);
             $this->validatePaymentMethods($command->payments);
             $this->assertNetPaymentWithinTotal($command->payments, $total);
 
             $now = CarbonImmutable::now('UTC');
             $orderId = (int) DB::table('pedidos')->insertGetId([
                 'cliente_id' => $command->clientId,
+                'cliente_nombre' => $command->contact?->name,
+                'cliente_telefono_cifrado' => $command->contact === null ? null : Crypt::encryptString($command->contact->phone),
+                'modalidad' => $command->freeOrder === null ? Pedido::MODE_CATALOG : Pedido::MODE_FREE,
+                'detalle_texto' => $command->freeOrder?->description,
+                'especificaciones_texto' => $command->freeOrder?->specifications,
+                'precio_total_acordado' => $command->freeOrder?->total,
                 'usuario_creador_id' => (int) $actor->getKey(),
                 'estado' => OrderStatus::Pending->value,
                 'entrega_programada_en' => $this->commandDate($command->scheduledDeliveryAt),
@@ -384,7 +391,10 @@ final class OrderService
                 ->lockForUpdate()
                 ->get();
 
-            if ($details->isEmpty()) {
+            if ($order->isFree() && $details->isNotEmpty()) {
+                throw new InventoryDomainException('El pedido tiene datos incompatibles. Solicita ayuda para revisarlo antes de entregar.');
+            }
+            if (! $order->isFree() && $details->isEmpty()) {
                 throw new InventoryDomainException('El pedido no tiene detalles para entregar.');
             }
 
@@ -407,7 +417,7 @@ final class OrderService
                 ->lockForUpdate()
                 ->get();
             $advance = $this->netPayment($payments);
-            $total = $this->detailsTotal($details);
+            $total = Decimal::money($order->totalFrom($details));
 
             if (Decimal::compare($advance, '0.00', 2) < 0
                 || Decimal::compare($advance, $total, 2) > 0) {
@@ -431,31 +441,26 @@ final class OrderService
                     throw new InventoryDomainException('El pago final debe cubrir exactamente el saldo del pedido.');
                 }
                 $this->assertPaymentUuidAvailability([$finalPayment]);
-                $this->lockPaymentSessions([$finalPayment], true);
                 $this->validatePaymentMethods([$finalPayment]);
             }
 
-            $existingCharges = $payments
-                ->where('tipo', PaymentType::Charge->value)
-                ->first();
-            $cashSessionId = $finalPayment?->cashSessionId
-                ?? ($existingCharges === null ? null : (int) $existingCharges->sesion_caja_id);
-            if ($cashSessionId === null) {
-                throw new InventoryDomainException('La venta derivada requiere una sesion de caja causal.');
+            $deliveryQuery = CashSessionGuard::operationalPrincipalQuery(CommercialDate::today());
+            if ($command->expectedCashSessionId !== null) {
+                $deliveryQuery->where('sesiones_caja.id', $command->expectedCashSessionId);
             }
-
+            if ($finalPayment !== null) {
+                $deliveryQuery->where('sesiones_caja.id', $finalPayment->cashSessionId);
+            }
+            $deliverySession = $deliveryQuery->lock('for update of sesiones_caja')->first(['sesiones_caja.*']);
+            if ($deliverySession === null) {
+                throw new InventoryDomainException('La entrega requiere una sesión vigente de Caja principal.');
+            }
             $deliveryAt = CarbonImmutable::now('UTC');
+            CashSessionGuard::assertOpen($deliverySession, $deliveryAt);
+            $cashSessionId = (int) $deliverySession->id;
             $commercialDate = CommercialDate::fromInstant($deliveryAt);
             $number = $this->correlatives->next($commercialDate);
-            $articleIds = $details->pluck('articulo_id')->map(static fn (mixed $id): int => (int) $id)->all();
-            $articles = $this->lockManager->lockArticles($articleIds);
-
-            foreach ($articles as $article) {
-                if (! (bool) $article->activo
-                    || ! in_array($article->tipo_articulo, ['elaborado', 'reventa'], true)) {
-                    throw new InventoryDomainException('El articulo del pedido no esta habilitado para la venta.');
-                }
-            }
+            $articles = $order->isFree() ? null : $this->lockCatalogArticles($details);
 
             $saleId = (int) DB::table('ventas')->insertGetId([
                 'fecha_comercial' => $commercialDate,
@@ -463,7 +468,7 @@ final class OrderService
                 'clave_idempotencia' => $command->commandUuid,
                 'usuario_id' => (int) $actor->getKey(),
                 'sesion_caja_id' => $cashSessionId,
-                'cliente_id' => (int) $order->cliente_id,
+                'cliente_id' => $order->cliente_id,
                 'pedido_id' => (int) $order->getKey(),
                 'estado' => 'completada',
                 'total' => $total,
@@ -472,51 +477,9 @@ final class OrderService
                 'observacion' => null,
             ]);
 
-            $detailIds = [];
-            foreach ($details as $detail) {
-                $detailIds[(int) $detail->id] = (int) DB::table('detalle_ventas')->insertGetId([
-                    'venta_id' => $saleId,
-                    'articulo_id' => (int) $detail->articulo_id,
-                    'articulo_sku_snapshot' => $detail->articulo_sku_snapshot,
-                    'articulo_nombre_snapshot' => $detail->articulo_nombre_snapshot,
-                    'unidad_codigo_snapshot' => $detail->unidad_codigo_snapshot,
-                    'unidad_simbolo_snapshot' => $detail->unidad_simbolo_snapshot,
-                    'cantidad' => $detail->cantidad,
-                    'precio_unitario' => $detail->precio_unitario,
-                    'subtotal' => Decimal::multiply((string) $detail->cantidad, (string) $detail->precio_unitario, 2),
-                ]);
+            if ($articles !== null) {
+                $this->recordCatalogSale($saleId, $details, $articles, (int) $actor->getKey(), $command->commandUuid, $deliveryAt);
             }
-
-            $positions = [];
-            $mutations = [];
-            foreach ($details as $detail) {
-                $articleId = (int) $detail->articulo_id;
-                $position = ($positions[$articleId] ?? 0) + 1;
-                $positions[$articleId] = $position;
-                $mutations[] = new InventoryStockMutation(
-                    articleId: $articleId,
-                    type: InventoryMovementType::Sale,
-                    delta: '-'.Decimal::quantity((string) $detail->cantidad),
-                    position: $position,
-                    occurredAt: $deliveryAt,
-                    actorId: (int) $actor->getKey(),
-                    authorizerId: null,
-                    reason: null,
-                    unitCode: (string) $detail->unidad_codigo_snapshot,
-                    unitSymbol: (string) $detail->unidad_simbolo_snapshot,
-                    saleDetailId: $detailIds[(int) $detail->id],
-                    receiptDetailId: null,
-                    productionDetailId: null,
-                    productionConsumptionId: null,
-                    wasteId: null,
-                    inventoryCountDetailId: null,
-                    reversedMovementId: null,
-                );
-            }
-
-            $simulation = $this->stock->simulatePlan($articles, $command->commandUuid, $mutations);
-            $this->stock->applyPlan($simulation);
-            $this->rebuildDailyStock($articles->ids(), $commercialDate);
 
             if ($finalPayment !== null) {
                 $paymentId = (int) DB::table('pagos_pedido')->insertGetId([
@@ -552,7 +515,10 @@ final class OrderService
                 'created_at' => $deliveryAt,
             ]);
 
-            return Pedido::query()->findOrFail($order->getKey());
+            $deliveredOrder = Pedido::query()->findOrFail($order->getKey());
+            CashSessionGuard::assertOpen($deliverySession);
+
+            return $deliveredOrder;
         });
     }
 
@@ -572,6 +538,9 @@ final class OrderService
         if ($sale === null || (int) $sale->pedido_id !== (int) $order->getKey()) {
             throw new InventoryDomainException('La entrega idempotente no tiene una venta derivada compatible.');
         }
+        if ($command->expectedCashSessionId !== null && (int) $sale->sesion_caja_id !== $command->expectedCashSessionId) {
+            throw new IdempotencyConflictException('El UUID de entrega ya fue usado con otra sesión de caja.');
+        }
 
         $hasFinalPayment = Decimal::compare((string) $sale->monto_anticipo_aplicado, (string) $sale->total, 2) < 0;
         if ($hasFinalPayment !== ($command->finalPayment !== null)) {
@@ -587,7 +556,9 @@ final class OrderService
                 || (int) $payment->metodo_pago_id !== $command->finalPayment->paymentMethodId
                 || (int) $payment->sesion_caja_id !== $command->finalPayment->cashSessionId
                 || $payment->tipo !== $command->finalPayment->type->value
-                || (string) $payment->monto !== $command->finalPayment->amount) {
+                || (string) $payment->monto !== $command->finalPayment->amount
+                || $payment->monto_recibido !== $command->finalPayment->receivedAmount
+                || $payment->vuelto !== $command->finalPayment->change) {
                 throw new IdempotencyConflictException('El UUID de entrega ya fue usado con otro pago final.');
             }
         }
@@ -605,18 +576,74 @@ final class OrderService
         return Decimal::money($net);
     }
 
-    private function detailsTotal(Collection $details): string
+    private function lockCatalogArticles(Collection $details): LockedArticleSet
     {
-        $total = '0.00';
+        $articleIds = $details->pluck('articulo_id')->map(static fn (mixed $id): int => (int) $id)->all();
+        $articles = $this->lockManager->lockArticles($articleIds);
+
+        foreach ($articles as $article) {
+            if (! (bool) $article->activo
+                || ! in_array($article->tipo_articulo, ['elaborado', 'reventa'], true)) {
+                throw new InventoryDomainException('El articulo del pedido no esta habilitado para la venta.');
+            }
+        }
+
+        return $articles;
+    }
+
+    private function recordCatalogSale(
+        int $saleId,
+        Collection $details,
+        LockedArticleSet $articles,
+        int $actorId,
+        string $commandUuid,
+        CarbonImmutable $deliveryAt,
+    ): void {
+        $detailIds = [];
         foreach ($details as $detail) {
-            $total = Decimal::add(
-                $total,
-                Decimal::multiply((string) $detail->cantidad, (string) $detail->precio_unitario, 2),
-                2,
+            $detailIds[(int) $detail->id] = (int) DB::table('detalle_ventas')->insertGetId([
+                'venta_id' => $saleId,
+                'articulo_id' => (int) $detail->articulo_id,
+                'articulo_sku_snapshot' => $detail->articulo_sku_snapshot,
+                'articulo_nombre_snapshot' => $detail->articulo_nombre_snapshot,
+                'unidad_codigo_snapshot' => $detail->unidad_codigo_snapshot,
+                'unidad_simbolo_snapshot' => $detail->unidad_simbolo_snapshot,
+                'cantidad' => $detail->cantidad,
+                'precio_unitario' => $detail->precio_unitario,
+                'subtotal' => Decimal::multiply((string) $detail->cantidad, (string) $detail->precio_unitario, 2),
+            ]);
+        }
+
+        $positions = [];
+        $mutations = [];
+        foreach ($details as $detail) {
+            $articleId = (int) $detail->articulo_id;
+            $position = ($positions[$articleId] ?? 0) + 1;
+            $positions[$articleId] = $position;
+            $mutations[] = new InventoryStockMutation(
+                articleId: $articleId,
+                type: InventoryMovementType::Sale,
+                delta: '-'.Decimal::quantity((string) $detail->cantidad),
+                position: $position,
+                occurredAt: $deliveryAt,
+                actorId: $actorId,
+                authorizerId: null,
+                reason: null,
+                unitCode: (string) $detail->unidad_codigo_snapshot,
+                unitSymbol: (string) $detail->unidad_simbolo_snapshot,
+                saleDetailId: $detailIds[(int) $detail->id],
+                receiptDetailId: null,
+                productionDetailId: null,
+                productionConsumptionId: null,
+                wasteId: null,
+                inventoryCountDetailId: null,
+                reversedMovementId: null,
             );
         }
 
-        return Decimal::money($total);
+        $simulation = $this->stock->simulatePlan($articles, $commandUuid, $mutations);
+        $this->stock->applyPlan($simulation);
+        $this->rebuildDailyStock($articles->ids(), CommercialDate::fromInstant($deliveryAt));
     }
 
     private function rebuildDailyStock(array $articleIds, string $fromCommercialDate): void
@@ -755,7 +782,13 @@ final class OrderService
     private function assertCompatibleCreate(Pedido $existing, User $actor, CreateOrderCommand $command): void
     {
         if ((int) $existing->usuario_creador_id !== (int) $actor->getKey()
-            || (int) $existing->cliente_id !== $command->clientId
+            || $existing->cliente_id !== $command->clientId
+            || $existing->cliente_nombre !== $command->contact?->name
+            || $existing->cliente_telefono_cifrado !== $command->contact?->phone
+            || $existing->isFree() !== ($command->freeOrder !== null)
+            || $existing->detalle_texto !== $command->freeOrder?->description
+            || $existing->especificaciones_texto !== $command->freeOrder?->specifications
+            || $existing->precio_total_acordado !== $command->freeOrder?->total
             || $existing->observacion !== $command->observation
             || ! $this->sameDate($existing->entrega_programada_en, $command->scheduledDeliveryAt)) {
             throw new IdempotencyConflictException('El UUID de creacion ya fue usado con otra intencion.');
@@ -898,7 +931,7 @@ final class OrderService
         }
     }
 
-    private function lockPaymentSessions(array $payments, bool $mustBeOpen): void
+    private function lockPrincipalPaymentSessions(array $payments): void
     {
         $ids = array_values(array_unique(array_map(
             static fn (OrderPaymentData $payment): int => $payment->cashSessionId,
@@ -907,13 +940,14 @@ final class OrderService
         sort($ids);
 
         foreach ($ids as $id) {
-            $session = DB::table('sesiones_caja')->where('id', $id)->lockForUpdate()->first();
+            $session = CashSessionGuard::operationalPrincipalQuery(CommercialDate::today())
+                ->where('sesiones_caja.id', $id)
+                ->lock('for update of sesiones_caja')
+                ->first(['sesiones_caja.*']);
             if ($session === null) {
-                throw (new ModelNotFoundException())->setModel('sesiones_caja', [$id]);
+                throw new InventoryDomainException('Para registrar un abono, Caja principal debe estar abierta en la jornada actual.');
             }
-            if ($mustBeOpen && $session->cerrada_en !== null) {
-                throw new InventoryDomainException('La sesion de caja debe estar abierta.');
-            }
+            CashSessionGuard::assertOpen($session);
         }
     }
 
@@ -943,7 +977,10 @@ final class OrderService
             ->all();
 
         foreach ($sessionIds as $sessionId) {
-            DB::table('sesiones_caja')->where('id', $sessionId)->lockForUpdate()->first();
+            $session = DB::table('sesiones_caja')->where('id', $sessionId)->lockForUpdate()->first();
+            if ($session !== null) {
+                CashSessionGuard::assertOpen($session);
+            }
         }
 
         return DB::table('pagos_pedido')

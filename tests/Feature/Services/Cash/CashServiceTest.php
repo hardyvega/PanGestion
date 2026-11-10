@@ -6,18 +6,37 @@ namespace Tests\Feature\Services\Cash;
 
 use App\Enums\PermissionCode;
 use App\Exceptions\Inventory\InventoryDomainException;
+use App\Models\SesionCaja;
 use App\Models\User;
 use App\Services\Cash\CashService;
+use App\Support\CommercialDate;
 use App\Support\Decimal;
+use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 use InvalidArgumentException;
 use Tests\TestCase;
 
 final class CashServiceTest extends TestCase
 {
     use RefreshDatabase;
+
+    private function openSession(User $actor, int $registerId, string $amount): SesionCaja
+    {
+        $fundId = DB::table('fondos_caja_autorizados')->where('caja_id', $registerId)->value('id');
+        if ($fundId === null) {
+            $fundId = DB::table('fondos_caja_autorizados')->insertGetId(['caja_id' => $registerId, 'fecha_operativa' => CommercialDate::today(), 'monto' => $amount, 'usuario_autorizante_id' => $actor->id, 'origen' => 'inicial', 'motivo' => 'Fixture autorizada', 'clave_idempotencia' => (string) Str::uuid(), 'created_at' => now('UTC')]);
+        }
+
+        return app(CashService::class)->open($actor, $registerId, (int) $fundId, CommercialDate::today(), (string) Str::uuid());
+    }
+
+    private function closeSession(User $actor, int $sessionId, string $amount, ?string $reason = null): SesionCaja
+    {
+        return app(CashService::class)->close($actor, $sessionId, $amount, $amount, CarbonImmutable::parse(CommercialDate::today())->addDay()->format('Y-m-d'), (string) Str::uuid(), true, $reason);
+    }
 
     public function test_open_registers_exact_initial_amount_and_user(): void
     {
@@ -27,7 +46,7 @@ final class CashServiceTest extends TestCase
         ]);
         $registerId = $this->register();
 
-        $session = app(CashService::class)->open($actor, $registerId, '10000');
+        $session = $this->openSession($actor, $registerId, '10000');
 
         $this->assertSame($registerId, $session->caja_id);
         $this->assertSame((int) $actor->getKey(), $session->usuario_apertura_id);
@@ -40,17 +59,17 @@ final class CashServiceTest extends TestCase
         $inactiveId = $this->register(false);
 
         $this->expectException(InventoryDomainException::class);
-        app(CashService::class)->open($actor, $inactiveId, '1.00');
+        $this->openSession($actor, $inactiveId, '1.00');
     }
 
     public function test_second_open_for_the_same_register_is_rejected(): void
     {
         $actor = $this->actor([PermissionCode::CashSessionsOpen]);
         $activeId = $this->register();
-        app(CashService::class)->open($actor, $activeId, '1.00');
+        $this->openSession($actor, $activeId, '1.00');
 
         $this->expectException(InventoryDomainException::class);
-        app(CashService::class)->open($actor, $activeId, '2.00');
+        $this->openSession($actor, $activeId, '2.00');
     }
 
     public function test_manual_movements_update_theoretical_amount_without_payment_causality(): void
@@ -60,7 +79,7 @@ final class CashServiceTest extends TestCase
             PermissionCode::CashSessionsView,
             PermissionCode::CashManualMovementsManage,
         ]);
-        $session = app(CashService::class)->open($actor, $this->register(), '10000');
+        $session = $this->openSession($actor, $this->register(), '10000');
         $cash = app(CashService::class);
 
         $cash->registerManualMovement($actor, (int) $session->getKey(), 'ingreso', '2000', 'Ingreso manual');
@@ -78,10 +97,11 @@ final class CashServiceTest extends TestCase
             PermissionCode::CashSessionsOpen,
             PermissionCode::CashSessionsView,
             PermissionCode::CashSessionsClose,
+            PermissionCode::CashFundsAuthorize,
             PermissionCode::CashManualMovementsManage,
         ]);
-        $session = app(CashService::class)->open($actor, $this->register(), '10000');
-        app(CashService::class)->close($actor, (int) $session->getKey(), '10000');
+        $session = $this->openSession($actor, $this->register(), '10000');
+        $this->closeSession($actor, (int) $session->getKey(), '10000');
 
         $this->expectException(InventoryDomainException::class);
         app(CashService::class)->registerManualMovement($actor, (int) $session->getKey(), 'ingreso', '1.00', 'Tarde');
@@ -93,21 +113,22 @@ final class CashServiceTest extends TestCase
             PermissionCode::CashSessionsOpen,
             PermissionCode::CashSessionsView,
             PermissionCode::CashSessionsClose,
+            PermissionCode::CashFundsAuthorize,
             PermissionCode::CashManualMovementsManage,
         ]);
         $cash = app(CashService::class);
-        $session = $cash->open($actor, $this->register(), '10000');
+        $session = $this->openSession($actor, $this->register(), '10000');
         $cash->registerManualMovement($actor, (int) $session->getKey(), 'ingreso', '2000', 'Ingreso');
         $cash->registerManualMovement($actor, (int) $session->getKey(), 'egreso', '500', 'Egreso');
 
-        $closed = $cash->close($actor, (int) $session->getKey(), '11200', 'Diferencia observada');
+        $closed = $this->closeSession($actor, (int) $session->getKey(), '11200', 'Diferencia observada');
         $this->assertNotNull($closed->cerrada_en);
         $this->assertSame('11500.00', (string) DB::table('sesiones_caja')->where('id', $session->getKey())->value('monto_teorico_cierre'));
         $this->assertSame('11200.00', (string) DB::table('sesiones_caja')->where('id', $session->getKey())->value('monto_cierre_declarado'));
         $this->assertSame('-300.00', Decimal::subtract('11200.00', '11500.00', 2));
 
         $this->expectException(InventoryDomainException::class);
-        $cash->close($actor, (int) $session->getKey(), '11500');
+        $this->closeSession($actor, (int) $session->getKey(), '11500');
     }
 
     public function test_invalid_money_and_type_are_rejected_before_persistence(): void
@@ -116,7 +137,7 @@ final class CashServiceTest extends TestCase
             PermissionCode::CashSessionsOpen,
             PermissionCode::CashManualMovementsManage,
         ]);
-        $session = app(CashService::class)->open($actor, $this->register(), '0');
+        $session = $this->openSession($actor, $this->register(), '0');
 
         $this->expectException(InvalidArgumentException::class);
         app(CashService::class)->registerManualMovement($actor, (int) $session->getKey(), 'cobro', '0.00', 'No válido');

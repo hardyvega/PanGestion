@@ -19,6 +19,7 @@ use App\Services\Administration\RoleAdministrationService;
 use App\Services\Administration\UserAdministrationService;
 use App\Services\Authorization\EffectivePermissionResolver;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
 
@@ -138,9 +139,18 @@ final class AdministrationController extends Controller
         return redirect()->route('admin.roles.show', $role)->with('success', 'Rol creado correctamente.');
     }
 
-    public function showRole(Request $request, Rol $rol): View
+    public function showRole(Request $request, Rol $rol): View|JsonResponse
     {
         $actor = $this->authorize($request, PermissionCode::RolesView);
+        if ($request->expectsJson()) {
+            $this->permissions->authorize($actor, PermissionCode::RolePermissionsManage);
+
+            return response()->json([
+                'user_id' => (string) $actor->getKey(),
+                'role_id' => (string) $rol->getKey(),
+                'csrf_token' => csrf_token(),
+            ])->header('Cache-Control', 'private, no-store');
+        }
         $rol->load(['usuarios' => fn ($query) => $query->orderBy('apellido')->orderBy('nombre'), 'permisos' => fn ($query) => $query->orderBy('modulo')->orderBy('codigo')]);
 
         return view('administration.roles.show', [
@@ -183,12 +193,22 @@ final class AdministrationController extends Controller
         return $this->changeRoleStatus($request, $rol, false);
     }
 
-    public function syncRolePermissions(SyncRolePermissionsRequest $request, Rol $rol): RedirectResponse
+    public function syncRolePermissions(SyncRolePermissionsRequest $request, Rol $rol): RedirectResponse|JsonResponse
     {
         try {
             $this->roles->syncPermissions($request->user(), $rol, $request->validated('permissions', []));
         } catch (OperationalAdminException $exception) {
+            if ($request->expectsJson()) {
+                return response()->json(['message' => $exception->getMessage()], 422)
+                    ->header('Cache-Control', 'private, no-store');
+            }
+
             return back()->withInput()->withErrors(['operacion' => $exception->getMessage()]);
+        }
+
+        if ($request->expectsJson()) {
+            return response()->json(['saved' => true, 'message' => 'Permisos del rol actualizados correctamente.'])
+                ->header('Cache-Control', 'private, no-store');
         }
 
         return back()->with('success', 'Permisos del rol actualizados correctamente.');

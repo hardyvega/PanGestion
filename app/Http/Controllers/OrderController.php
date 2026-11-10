@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Support\UserFacingError;
+
 use App\Data\Orders\CancelOrderCommand;
 use App\Data\Orders\CreateOrderCommand;
 use App\Data\Orders\DeliverOrderCommand;
-use App\Data\Orders\OrderLineData;
+use App\Data\Orders\OrderContact;
+use App\Data\Orders\FreeOrderData;
 use App\Data\Orders\OrderPaymentData;
 use App\Data\Orders\TransitionOrderCommand;
 use App\Enums\OrderStatus;
@@ -23,7 +26,10 @@ use App\Models\Pedido;
 use App\Models\User;
 use App\Services\Articles\SellableArticleLookupService;
 use App\Services\Authorization\EffectivePermissionResolver;
+use App\Services\Cash\CashService;
+use App\Services\Cash\CashSessionGuard;
 use App\Services\Orders\OrderService;
+use App\Support\CommercialDate;
 use App\Support\Decimal;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -41,6 +47,7 @@ final class OrderController extends Controller
         private readonly EffectivePermissionResolver $permissions,
         private readonly SellableArticleLookupService $lookup,
         private readonly OrderService $orders,
+        private readonly CashService $cash,
     ) {
     }
 
@@ -48,6 +55,10 @@ final class OrderController extends Controller
     {
         $user = $request->user();
         $this->authorizeOrdersView($user);
+        $request->validate([
+            'date_from' => ['nullable', 'date_format:Y-m-d'],
+            'date_until' => ['nullable', 'date_format:Y-m-d'],
+        ]);
 
         $base = Pedido::query();
         $this->applyFilters($base, $request);
@@ -84,25 +95,15 @@ final class OrderController extends Controller
         $user = $request->user();
         $this->authorize($user, PermissionCode::OrdersCreate);
 
-        $initialLines = old('lines', []);
-        $articleIds = collect(is_array($initialLines) ? $initialLines : [])
-            ->pluck('article_id')
-            ->filter(static fn (mixed $id): bool => is_numeric($id) && (int) $id > 0)
-            ->map(static fn (mixed $id): int => (int) $id)
-            ->unique()
-            ->values()
-            ->all();
+        $canCollect = $this->permissions->allows($user, PermissionCode::OrdersCollect);
 
         return view('orders.create', [
             'user' => $user,
-            'paymentMethods' => $this->activePaymentMethods(),
-            'cashSessions' => $this->openCashSessions(),
-            'initialCart' => $this->articlePayload($articleIds),
-            'initialLines' => is_array($initialLines) ? $initialLines : [],
+            'canCollect' => $canCollect,
+            'paymentMethods' => $canCollect ? $this->activePaymentMethods() : [],
+            'cashSessions' => $canCollect ? $this->openCashSessions() : [],
             'initialPayments' => old('payments', []),
-            'clients' => $this->clientPayload(),
-            'initialClientId' => old('client_id'),
-            'commandUuid' => old('command_uuid', (string) Str::uuid()),
+            'commandUuid' => Str::isUuid(old('command_uuid')) ? old('command_uuid') : (string) Str::uuid(),
         ]);
     }
 
@@ -168,7 +169,7 @@ final class OrderController extends Controller
         $data = $request->validated();
 
         try {
-            $order = $this->orders->create($user, $this->createCommand($data));
+            $order = $this->orders->create($user, $this->createCommand($data, $request->scheduledDeliveryAt()));
         } catch (Throwable $exception) {
             return $this->failure($exception, 'No se pudo crear el pedido. Revisa los datos e inténtalo nuevamente.');
         }
@@ -180,18 +181,23 @@ final class OrderController extends Controller
     {
         $user = $request->user();
         $this->authorizeOrdersView($user);
-        $pedido->load(['cliente', 'usuarioCreador', 'detalles', 'pagos.metodoPago', 'transiciones.usuario', 'venta']);
+        $pedido->load(['cliente', 'usuarioCreador', 'detalles', 'pagos.metodoPago', 'pagos.usuario:id,nombre,apellido', 'transiciones.usuario', 'venta']);
         $finance = $this->finance($pedido);
+        $canManage = $this->permissions->allows($user, PermissionCode::OrdersManage);
+        $canDeliver = $this->permissions->allows($user, PermissionCode::OrdersDeliver);
+        $cashSessions = $canDeliver ? $this->openCashSessions() : [];
 
         return view('orders.show', [
             'user' => $user,
             'order' => $pedido,
             'finance' => $finance,
             'paymentMethods' => $this->activePaymentMethods(),
-            'cashSessions' => $this->openCashSessions(),
-            'canManage' => $this->permissions->allows($user, PermissionCode::OrdersManage),
+            'cashSessions' => $cashSessions,
+            'canAccessCash' => $canDeliver && $cashSessions === [] && $this->cash->canAccess($user),
+            'contactPhone' => $canManage || $canDeliver ? $pedido->cliente_telefono_cifrado : null,
+            'canManage' => $canManage,
             'canCancel' => $this->permissions->allows($user, PermissionCode::OrdersCancel),
-            'canDeliver' => $this->permissions->allows($user, PermissionCode::OrdersDeliver),
+            'canDeliver' => $canDeliver,
             'canCollect' => $this->permissions->allows($user, PermissionCode::OrdersCollect),
             'deliveryUuid' => old('command_uuid', (string) Str::uuid()),
         ]);
@@ -258,45 +264,13 @@ final class OrderController extends Controller
     }
 
     /** @param array<string, mixed> $data */
-    private function createCommand(array $data): CreateOrderCommand
+    private function createCommand(#[\SensitiveParameter] array $data, CarbonImmutable $deliveryAt): CreateOrderCommand
     {
-        $articleIds = collect($data['lines'])->pluck('article_id')->map(static fn (mixed $id): int => (int) $id)->unique()->values()->all();
-        $articles = \DB::table('articulos')
-            ->join('unidades_medida', 'unidades_medida.id', '=', 'articulos.unidad_id')
-            ->whereIn('articulos.id', $articleIds)
-            ->where('articulos.activo', true)
-            ->whereIn('articulos.tipo_articulo', ['elaborado', 'reventa'])
-            ->whereNotNull('articulos.precio_venta_actual')
-            ->get([
-                'articulos.id', 'articulos.precio_venta_actual',
-                'unidades_medida.codigo as unidad_codigo', 'unidades_medida.simbolo as unidad_simbolo',
-            ])
-            ->keyBy('id');
-
-        $lines = [];
-        foreach ($data['lines'] as $index => $line) {
-            $article = $articles->get((int) $line['article_id']);
-            if ($article === null) {
-                $this->invalid('lines.'.$index.'.article_id', 'El artículo ya no está habilitado para pedidos.');
-            }
-
-            try {
-                $lines[] = new OrderLineData(
-                    (int) $line['article_id'],
-                    (string) $line['quantity'],
-                    Decimal::money((string) $article->precio_venta_actual),
-                    $this->nullableTrim($line['observation'] ?? null),
-                );
-            } catch (Throwable) {
-                $this->invalid('lines.'.$index.'.quantity', 'La cantidad del artículo no es válida.');
-            }
-        }
-
         $payments = [];
         $rawPayments = is_array($data['payments'] ?? null) ? $data['payments'] : [];
         $sessionId = (int) ($data['cash_session_id'] ?? 0);
         if ($rawPayments !== [] && $sessionId < 1) {
-            $this->invalid('cash_session_id', 'Selecciona una sesión de caja para registrar el anticipo.');
+            $this->invalid('cash_session_id', 'Para registrar un abono, Caja principal debe estar abierta.');
         }
         $methods = \DB::table('metodos_pago')->whereIn('id', collect($rawPayments)->pluck('payment_method_id')->map(static fn (mixed $id): int => (int) $id)->all())->where('activo', true)->get()->keyBy('id');
 
@@ -332,33 +306,32 @@ final class OrderController extends Controller
                     $received,
                     $change,
                 );
+            } catch (ValidationException $exception) {
+                throw $exception;
             } catch (Throwable) {
                 $this->invalid('payments.'.$index.'.amount', 'El monto del anticipo no es válido.');
             }
         }
 
         return new CreateOrderCommand(
-            (string) $data['command_uuid'],
-            (int) $data['client_id'],
-            $lines,
-            $payments,
-            ! empty($data['scheduled_delivery_at']) ? CarbonImmutable::parse((string) $data['scheduled_delivery_at']) : null,
-            $this->nullableTrim($data['observation'] ?? null),
+            commandUuid: $data['command_uuid'],
+            clientId: null,
+            lines: [],
+            payments: $payments,
+            scheduledDeliveryAt: $deliveryAt,
+            contact: new OrderContact($data['contact_name'], $data['contact_phone']),
+            freeOrder: new FreeOrderData($data['description'], $data['specifications'] ?? null, $data['agreed_total']),
         );
     }
 
     /** @param array<string, mixed> $data */
     private function deliveryCommand(Pedido $pedido, array $data): DeliverOrderCommand
     {
-        $finance = $this->finance($pedido->load(['detalles', 'pagos']));
         $raw = $data['final_payment'] ?? null;
         $payment = null;
 
         if (is_array($raw)) {
             $amount = Decimal::money((string) ($raw['amount'] ?? ''));
-            if (Decimal::compare($amount, $finance['balance'], 2) !== 0) {
-                $this->invalid('final_payment.amount', 'El pago final debe cubrir exactamente el saldo.');
-            }
             $method = \DB::table('metodos_pago')->where('id', (int) $raw['payment_method_id'])->where('activo', true)->first();
             if ($method === null) {
                 $this->invalid('final_payment.payment_method_id', 'El método de pago no está disponible.');
@@ -390,7 +363,12 @@ final class OrderController extends Controller
             );
         }
 
-        return new DeliverOrderCommand((int) $pedido->getKey(), (string) $data['command_uuid'], $payment);
+        return new DeliverOrderCommand(
+            (int) $pedido->getKey(),
+            (string) $data['command_uuid'],
+            $payment,
+            isset($data['cash_session_id']) ? (int) $data['cash_session_id'] : null,
+        );
     }
 
     private function applyFilters($query, Request $request): void
@@ -400,10 +378,10 @@ final class OrderController extends Controller
             $query->where('estado', $status);
         }
         if (is_string($request->query('date_from')) && $request->query('date_from') !== '') {
-            $query->whereDate('created_at', '>=', $request->query('date_from'));
+            $query->where('created_at', '>=', CommercialDate::utcRange($request->query('date_from'))['start']);
         }
         if (is_string($request->query('date_until')) && $request->query('date_until') !== '') {
-            $query->whereDate('created_at', '<=', $request->query('date_until'));
+            $query->where('created_at', '<', CommercialDate::utcRange($request->query('date_until'))['end']);
         }
         $term = trim((string) $request->query('q', ''));
         if ($term !== '') {
@@ -411,7 +389,9 @@ final class OrderController extends Controller
                 if (ctype_digit($term)) {
                     $nested->where('id', (int) $term);
                 }
-                $nested->orWhereHas('cliente', static fn ($client) => $client->where('nombre', 'ilike', '%'.$term.'%'))
+                $nested->orWhere('cliente_nombre', 'ilike', '%'.$term.'%')
+                    ->orWhere('detalle_texto', 'ilike', '%'.$term.'%')
+                    ->orWhereHas('cliente', static fn ($client) => $client->where('nombre', 'ilike', '%'.$term.'%'))
                     ->orWhereHas('detalles', static fn ($detail) => $detail
                         ->where('articulo_nombre_snapshot', 'ilike', '%'.$term.'%')
                         ->orWhere('articulo_sku_snapshot', 'ilike', '%'.$term.'%'));
@@ -419,13 +399,10 @@ final class OrderController extends Controller
         }
     }
 
-    /** @return array{total: string, paid: string, balance: string} */
+    /** @return array{total: string, paid: string, balance: string, paymentStatus: string} */
     private function finance(Pedido $order): array
     {
-        $total = '0.00';
-        foreach ($order->detalles as $detail) {
-            $total = Decimal::add($total, Decimal::multiply((string) $detail->cantidad, (string) $detail->precio_unitario, 2), 2);
-        }
+        $total = $order->totalFrom($order->detalles);
         $paid = '0.00';
         foreach ($order->pagos as $payment) {
             $type = $payment->tipo instanceof PaymentType ? $payment->tipo->value : (string) $payment->tipo;
@@ -434,10 +411,13 @@ final class OrderController extends Controller
                 : Decimal::subtract($paid, (string) $payment->monto, 2);
         }
 
+        $balance = Decimal::compare($total, $paid, 2) > 0 ? Decimal::subtract($total, $paid, 2) : '0.00';
+
         return [
             'total' => $total,
             'paid' => $paid,
-            'balance' => Decimal::compare($total, $paid, 2) > 0 ? Decimal::subtract($total, $paid, 2) : '0.00',
+            'balance' => $balance,
+            'paymentStatus' => Decimal::compare($paid, '0.00', 2) <= 0 ? 'Sin pagar' : ($balance === '0.00' ? 'Pagado' : 'Pago parcial'),
         ];
     }
 
@@ -496,7 +476,8 @@ final class OrderController extends Controller
     /** @return array<int, array<string, mixed>> */
     private function openCashSessions(): array
     {
-        return \DB::table('sesiones_caja')->join('cajas', 'cajas.id', '=', 'sesiones_caja.caja_id')->whereNull('sesiones_caja.cerrada_en')->where('cajas.activo', true)->orderByDesc('sesiones_caja.abierta_en')->get(['sesiones_caja.id', 'cajas.nombre AS caja_nombre'])->map(static fn (object $session): array => [
+        return CashSessionGuard::operationalPrincipalQuery(CommercialDate::today())
+            ->orderByDesc('sesiones_caja.abierta_en')->get(['sesiones_caja.id', 'cajas.nombre AS caja_nombre'])->map(static fn (object $session): array => [
             'id' => (int) $session->id,
             'nombre' => (string) $session->caja_nombre,
         ])->all();
@@ -534,20 +515,12 @@ final class OrderController extends Controller
         if ($exception instanceof ModelNotFoundException) {
             $fallback = 'El pedido, artículo, método de pago o sesión ya no está disponible.';
         } elseif ($exception instanceof InventoryDomainException || $exception instanceof IdempotencyConflictException) {
-            $fallback = $exception->getMessage() !== '' ? $exception->getMessage() : $fallback;
+            $fallback = UserFacingError::message($exception, $fallback);
         } else {
-            report($exception);
+            throw $exception;
         }
 
-        return back()->withInput()->withErrors(['order' => $fallback]);
-    }
-
-    private function nullableTrim(mixed $value): ?string
-    {
-        if (! is_string($value) || trim($value) === '') {
-            return null;
-        }
-        return trim($value);
+        return back()->withInput(request()->except(['contact_name', 'contact_phone']))->withErrors(['order' => $fallback]);
     }
 
     private function invalid(string $key, string $message): never

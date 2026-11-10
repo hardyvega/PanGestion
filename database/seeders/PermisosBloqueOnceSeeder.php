@@ -81,6 +81,7 @@ final class PermisosBloqueOnceSeeder extends Seeder
         return array_values(array_filter(
             PermissionCode::cases(),
             static fn (PermissionCode $permission): bool => ! in_array($permission, [
+                PermissionCode::CashFundsAuthorize,
                 PermissionCode::PersonnelView,
                 PermissionCode::PersonnelManage,
                 PermissionCode::HourlyRatesView,

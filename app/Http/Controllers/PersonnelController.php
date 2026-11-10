@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Support\UserFacingError;
+
 use App\Data\Attendance\AnnulAttendanceCommand;
 use App\Data\Attendance\CloseAttendanceCommand;
 use App\Data\Attendance\RecordManualAttendanceCommand;
@@ -32,6 +34,7 @@ use App\Services\Authorization\EffectivePermissionResolver;
 use App\Services\Personnel\HourlyRateService;
 use App\Services\Personnel\WorkerService;
 use App\Services\Reports\HourlyPayReportService;
+use App\Support\CommercialDate;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\RedirectResponse;
@@ -190,7 +193,7 @@ final class PersonnelController extends Controller
         try {
             $this->rates->add($request->user(), new SetHourlyRateCommand(
                 (int) $trabajador->getKey(), $data['valor_hora'],
-                CarbonImmutable::createFromFormat('Y-m-d\\TH:i', $data['vigente_desde'], 'UTC'),
+                $request->commercialInstant('vigente_desde'),
                 $data['observacion'] ?? null,
             ));
         } catch (Throwable $exception) {
@@ -233,11 +236,8 @@ final class PersonnelController extends Controller
 
     public function close(CloseAttendanceRequest $request, JornadaTrabajo $jornada): RedirectResponse
     {
-        $data = $request->validated();
         try {
-            $finishedAt = filled($data['finalizada_en'] ?? null)
-                ? CarbonImmutable::createFromFormat('Y-m-d\\TH:i', $data['finalizada_en'], 'UTC')
-                : null;
+            $finishedAt = $request->commercialInstant('finalizada_en');
             $this->attendance->close($request->user(), new CloseAttendanceCommand((int) $jornada->getKey(), (string) Str::uuid(), $finishedAt));
         } catch (Throwable $exception) {
             return $this->failure($exception, 'No se pudo cerrar la jornada.');
@@ -276,8 +276,8 @@ final class PersonnelController extends Controller
         try {
             $this->attendance->recordManual($request->user(), new RecordManualAttendanceCommand(
                 (int) $data['trabajador_id'], (string) Str::uuid(), (string) Str::uuid(),
-                CarbonImmutable::createFromFormat('Y-m-d\\TH:i', $data['iniciada_en'], 'UTC'),
-                CarbonImmutable::createFromFormat('Y-m-d\\TH:i', $data['finalizada_en'], 'UTC'),
+                $request->commercialInstant('iniciada_en'),
+                $request->commercialInstant('finalizada_en'),
             ));
         } catch (Throwable $exception) {
             return $this->failure($exception, 'No se pudo registrar la asistencia manual.');
@@ -343,12 +343,12 @@ final class PersonnelController extends Controller
 
     private function reportRange(HourlyPayReportRequest $request): array
     {
-        $fromValue = $request->validated('desde') ?: now('UTC')->startOfMonth()->format('Y-m-d');
-        $untilValue = $request->validated('hasta') ?: now('UTC')->endOfMonth()->format('Y-m-d');
-        $from = $this->date($fromValue)->startOfDay();
-        $until = $this->date($untilValue)->startOfDay()->addDay();
+        $today = $this->date(CommercialDate::today());
+        $fromValue = $request->validated('desde') ?: $today->startOfMonth()->toDateString();
+        $untilValue = $request->validated('hasta') ?: $today->endOfMonth()->toDateString();
+        $range = CommercialDate::utcRange($fromValue, $untilValue);
 
-        return [$from, $until, ['desde' => $fromValue, 'hasta' => $untilValue]];
+        return [$range['start'], $range['end'], ['desde' => $fromValue, 'hasta' => $untilValue]];
     }
 
     /** @return array{user: User} */
@@ -363,11 +363,11 @@ final class PersonnelController extends Controller
             throw $exception;
         }
         if ($exception instanceof InventoryDomainException || $exception instanceof InvalidArgumentException) {
-            $fallback = $exception->getMessage() !== '' ? $exception->getMessage() : $fallback;
+            $fallback = UserFacingError::message($exception, $fallback);
         } elseif ($exception instanceof ModelNotFoundException) {
             $fallback = 'El registro seleccionado ya no está disponible.';
         } else {
-            report($exception);
+            throw $exception;
         }
 
         return back()->withInput()->withErrors(['personnel' => $fallback]);

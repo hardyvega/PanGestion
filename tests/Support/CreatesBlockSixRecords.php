@@ -2,7 +2,9 @@
 
 namespace Tests\Support;
 
+use App\Support\CommercialDate;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 trait CreatesBlockSixRecords
 {
@@ -20,6 +22,30 @@ trait CreatesBlockSixRecords
         return (int) DB::table('sesiones_caja')->insertGetId(
             $this->cashSessionData($cashRegisterId, $openingUserId, $overrides),
         );
+    }
+
+    protected function createOperationalCashSession(int $cashRegisterId, int $openingUserId): int
+    {
+        $openedAt = now('UTC');
+        $date = CommercialDate::fromInstant($openedAt);
+        $fundId = DB::table('fondos_caja_autorizados')->insertGetId([
+            'caja_id' => $cashRegisterId,
+            'fecha_operativa' => $date,
+            'monto' => '0.00',
+            'usuario_autorizante_id' => $openingUserId,
+            'origen' => 'inicial',
+            'clave_idempotencia' => (string) Str::uuid(),
+            'motivo' => 'Fondo autorizado de prueba',
+            'created_at' => $openedAt,
+            'utilizada_en' => $openedAt,
+        ]);
+
+        return $this->createCashSession($cashRegisterId, $openingUserId, [
+            'abierta_en' => $openedAt,
+            'fecha_operativa' => $date,
+            'fondo_autorizado_id' => $fundId,
+            'clave_idempotencia_apertura' => (string) Str::uuid(),
+        ]);
     }
 
     protected function cashMovementData(int $cashSessionId, int $userId, array $overrides = []): array

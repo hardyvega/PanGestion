@@ -81,13 +81,10 @@ trait OrderDeliveryFixtures
             'stock_actual' => '10.000',
             'activo' => true,
         ]);
-        $cashSessionId = $this->createCashSession(
-            $this->createCashRegister([
-                'codigo' => 'r8_'.$token.'_caja',
-                'nombre' => 'Caja R8 '.$token,
-            ]),
-            (int) $actor->getKey(),
-        );
+        $register = DB::table('cajas')->where('codigo', 'principal')->value('id')
+            ?? $this->createCashRegister(['codigo' => 'principal', 'nombre' => 'Caja principal']);
+        $cashSessionId = DB::table('sesiones_caja')->where('caja_id', $register)->whereNull('cerrada_en')->value('id')
+            ?? $this->createOperationalCashSession($register, (int) $actor->getKey());
         $paymentMethodId = $this->createPaymentMethod([
             'codigo' => 'r8_'.$token.'_metodo',
             'nombre' => 'Metodo R8 '.$token,

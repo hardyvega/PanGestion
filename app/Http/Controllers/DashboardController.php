@@ -22,12 +22,12 @@ final class DashboardController extends Controller
     public function index(Request $request): View
     {
         $user = $request->user();
-        $period = $this->period($request->query('period'));
+        $metrics = $this->dashboard->summary($user);
 
         return view('inicio', [
             ...$this->pageData($user),
-            'metrics' => $this->dashboard->summary($user),
-            'selectedPeriod' => $period,
+            'metrics' => $metrics,
+            'selectedPeriod' => $metrics->hasPeriodTotals() ? $this->period($request->query('period')) : 'hoy',
         ]);
     }
 

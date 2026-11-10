@@ -1,4 +1,5 @@
 @extends('layouts.authenticated', ['title' => 'Artículos | Almapan'])
+@use('App\Support\InventoryQuantity')
 
 @section('page')
     <section class="articles-page" aria-labelledby="articles-title">
@@ -100,8 +101,8 @@
                                         <small>{{ $article->codigo_barras ?: 'Sin código de barras' }}</small>
                                     </td>
                                     <td data-label="Tipo">{{ $types[$article->tipo_articulo] ?? $article->tipo_articulo }}</td>
-                                    <td data-label="Stock actual" class="{{ bccomp((string) $article->stock_actual, (string) $article->stock_minimo, 3) <= 0 ? 'article-stock-low' : '' }}">{{ $article->stock_actual }} {{ $article->unidad?->simbolo }}</td>
-                                    <td data-label="Stock mínimo">{{ $article->stock_minimo }} {{ $article->unidad?->simbolo }}</td>
+                                    <td data-label="Stock actual" class="{{ bccomp((string) $article->stock_actual, (string) $article->stock_minimo, 3) <= 0 ? 'article-stock-low' : '' }}">{{ InventoryQuantity::format((string) $article->stock_actual, $article->unidad?->simbolo) }}</td>
+                                    <td data-label="Stock mínimo">{{ InventoryQuantity::format((string) $article->stock_minimo, $article->unidad?->simbolo) }}</td>
                                     <td data-label="Precio vigente">{{ $article->precio_venta_actual !== null ? '$'.number_format((float) $article->precio_venta_actual, 2, ',', '.') : 'Sin precio' }}</td>
                                     <td data-label="Estado"><span class="article-status {{ $article->activo ? 'article-status-active' : 'article-status-inactive' }}">{{ $article->activo ? 'Activo' : 'Inactivo' }}</span></td>
                                     <td data-label="Acciones"><a class="text-button" href="{{ route('articles.show', $article) }}">Ver detalle</a></td>

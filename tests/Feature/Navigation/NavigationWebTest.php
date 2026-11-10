@@ -23,7 +23,7 @@ final class NavigationWebTest extends TestCase
         'inicio', 'sales.create', 'orders.index',
         'inventory.index', 'receipts.index', 'inventory.movements',
         'inventory.counts', 'inventory.wastes', 'inventory.adjustments.create',
-        'productions.index', 'recipes.index', 'articles.index', 'suppliers.index',
+        'productions.index', 'recipes.index', 'articles.index', 'catalog.categories.index', 'catalog.units.index', 'suppliers.index',
         'cash.index', 'cash.movements', 'personnel.index', 'attendance.mark',
         'attendance.index', 'personnel.pay-report', 'admin.users.index',
         'admin.roles.index', 'admin.permissions.index',

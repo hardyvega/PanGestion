@@ -1,16 +1,18 @@
 <?php
 
-use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\AdministrationController;
 use App\Http\Controllers\ArticleController;
+use App\Http\Controllers\ArticleCategoryController;
+use App\Http\Controllers\UnitOfMeasureController;
+use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\CashController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\PersonnelController;
 use App\Http\Controllers\ProductionController;
-use App\Http\Controllers\RecipeController;
 use App\Http\Controllers\ReceiptController;
+use App\Http\Controllers\RecipeController;
 use App\Http\Controllers\SaleController;
 use App\Http\Controllers\SupplierController;
 use Illuminate\Support\Facades\Route;
@@ -34,6 +36,23 @@ Route::post('/articulos/{articulo}/activar', [ArticleController::class, 'activat
 Route::post('/articulos/{articulo}/desactivar', [ArticleController::class, 'deactivate'])->middleware('auth')->name('articles.deactivate');
 Route::post('/articulos/{articulo}/precios', [ArticleController::class, 'updatePrice'])->middleware('auth')->name('articles.prices.store');
 
+Route::prefix('catalogo')->middleware(['auth', 'can:articulos.gestionar'])->name('catalog.')->group(function (): void {
+    Route::get('/categorias', [ArticleCategoryController::class, 'index'])->name('categories.index');
+    Route::get('/categorias/crear', [ArticleCategoryController::class, 'create'])->name('categories.create');
+    Route::post('/categorias', [ArticleCategoryController::class, 'store'])->name('categories.store');
+    Route::get('/categorias/{categoria}/editar', [ArticleCategoryController::class, 'edit'])->name('categories.edit');
+    Route::put('/categorias/{categoria}', [ArticleCategoryController::class, 'update'])->name('categories.update');
+    Route::post('/categorias/{categoria}/activar', [ArticleCategoryController::class, 'activate'])->name('categories.activate');
+    Route::post('/categorias/{categoria}/desactivar', [ArticleCategoryController::class, 'deactivate'])->name('categories.deactivate');
+    Route::get('/unidades', [UnitOfMeasureController::class, 'index'])->name('units.index');
+    Route::get('/unidades/crear', [UnitOfMeasureController::class, 'create'])->name('units.create');
+    Route::post('/unidades', [UnitOfMeasureController::class, 'store'])->name('units.store');
+    Route::get('/unidades/{unidad}/editar', [UnitOfMeasureController::class, 'edit'])->name('units.edit');
+    Route::put('/unidades/{unidad}', [UnitOfMeasureController::class, 'update'])->name('units.update');
+    Route::post('/unidades/{unidad}/activar', [UnitOfMeasureController::class, 'activate'])->name('units.activate');
+    Route::post('/unidades/{unidad}/desactivar', [UnitOfMeasureController::class, 'deactivate'])->name('units.deactivate');
+});
+
 Route::get('/proveedores', [SupplierController::class, 'index'])->middleware('auth')->name('suppliers.index');
 Route::get('/proveedores/crear', [SupplierController::class, 'create'])->middleware('auth')->name('suppliers.create');
 Route::post('/proveedores', [SupplierController::class, 'store'])->middleware('auth')->name('suppliers.store');
@@ -48,6 +67,7 @@ Route::delete('/proveedores/{proveedor}/articulos/{articulo}', [SupplierControll
 Route::get('/inventario', [InventoryController::class, 'index'])->middleware('auth')->name('inventory.index');
 Route::get('/inventario/articulos/{articulo}', [InventoryController::class, 'show'])->middleware('auth')->name('inventory.show');
 Route::get('/inventario/movimientos', [InventoryController::class, 'movements'])->middleware('auth')->name('inventory.movements');
+Route::get('/inventario/movimientos/articulos', [InventoryController::class, 'movementArticleSuggestions'])->middleware('auth')->name('inventory.movements.articles');
 Route::get('/inventario/ajustes/crear', [InventoryController::class, 'adjustmentCreate'])->middleware('auth')->name('inventory.adjustments.create');
 Route::post('/inventario/ajustes', [InventoryController::class, 'adjustmentStore'])->middleware('auth')->name('inventory.adjustments.store');
 Route::get('/inventario/conteos', [InventoryController::class, 'counts'])->middleware('auth')->name('inventory.counts');
@@ -108,6 +128,12 @@ Route::get('/ventas/buscar', [SaleController::class, 'search'])
     ->middleware('auth')
     ->name('sales.search');
 
+Route::get('/ventas/recientes/{session}', [SaleController::class, 'recent'])
+    ->whereNumber('session')
+    ->withoutMiddleware(\Illuminate\Session\Middleware\StartSession::class)
+    ->middleware([\App\Http\Middleware\ReadOnlySession::class, 'auth'])
+    ->name('sales.recent');
+
 Route::post('/ventas', [SaleController::class, 'store'])
     ->middleware('auth')
     ->name('sales.store');
@@ -163,6 +189,11 @@ Route::post('/pedidos/{pedido}/entregar', [OrderController::class, 'deliver'])
 Route::get('/caja', [CashController::class, 'index'])
     ->middleware('auth')
     ->name('cash.index');
+
+Route::get('/caja/fondo-inicial', [CashController::class, 'initialFund'])->middleware('auth')->name('cash.funds.create');
+Route::post('/caja/fondo-inicial', [CashController::class, 'authorizeInitialFund'])->middleware('auth')->name('cash.funds.store');
+Route::get('/caja/fondo-apertura', [CashController::class, 'openingFund'])->middleware('auth')->name('cash.funds.opening.create');
+Route::post('/caja/fondo-apertura', [CashController::class, 'authorizeOpeningFund'])->middleware('auth')->name('cash.funds.opening.store');
 
 Route::get('/caja/movimientos', [CashController::class, 'movements'])
     ->middleware('auth')

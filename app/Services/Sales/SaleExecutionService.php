@@ -17,6 +17,7 @@ use App\Models\MovimientoInventario;
 use App\Models\User;
 use App\Models\Venta;
 use App\Services\Cash\CashPostingService;
+use App\Services\Cash\CashSessionGuard;
 use App\Services\Inventory\InventoryLockManager;
 use App\Services\Inventory\InventoryStockService;
 use App\Services\Inventory\StockDailyRebuilder;
@@ -183,7 +184,11 @@ final class SaleExecutionService
             throw new InventoryDomainException('Solo se pueden anular ventas completadas.');
         }
 
-        $this->lockCashSession((int) $sale->sesion_caja_id, false);
+        if ($sale->pedido_id !== null && $sale->pedido?->isFree()) {
+            throw new InventoryDomainException('La venta de un pedido por encargo todavía no se puede anular desde el sistema.');
+        }
+
+        $this->lockCashSession((int) $sale->sesion_caja_id, true);
         $details = DB::table('detalle_ventas')
             ->where('venta_id', $sale->getKey())
             ->orderBy('id')
@@ -286,11 +291,11 @@ final class SaleExecutionService
             ->first();
 
         if ($session === null) {
-            throw (new ModelNotFoundException())->setModel('sesiones_caja', [$sessionId]);
+            throw (new ModelNotFoundException)->setModel('sesiones_caja', [$sessionId]);
         }
 
-        if ($mustBeOpen && $session->cerrada_en !== null) {
-            throw new InventoryDomainException('La sesion de caja debe estar abierta.');
+        if ($mustBeOpen) {
+            CashSessionGuard::assertOpen($session);
         }
 
         return $session;

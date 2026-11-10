@@ -13,7 +13,7 @@ final class CloseCashSessionRequest extends FormRequest
     public function authorize(): bool
     {
         return $this->user() !== null
-            && app(EffectivePermissionResolver::class)->allows($this->user(), PermissionCode::CashSessionsClose);
+            && app(EffectivePermissionResolver::class)->allowsAll($this->user(), [PermissionCode::CashSessionsClose, PermissionCode::CashFundsAuthorize]);
     }
 
     public function rules(): array
@@ -21,6 +21,11 @@ final class CloseCashSessionRequest extends FormRequest
         return [
             'monto_declarado' => ['required', 'regex:/^[0-9]+(?:\.[0-9]{1,2})?$/'],
             'observacion' => ['nullable', 'string', 'max:5000'],
+            'fondo_siguiente' => ['required', 'regex:/^[0-9]+(?:\.[0-9]{1,2})?$/'],
+            'fecha_siguiente' => ['required', 'date_format:Y-m-d'],
+            'clave_idempotencia' => ['required', 'uuid'],
+            'confirmacion' => ['required', 'accepted'],
+            'esperado_revisado' => ['required', 'regex:/^-?[0-9]+(?:\.[0-9]{1,2})?$/'],
         ];
     }
 

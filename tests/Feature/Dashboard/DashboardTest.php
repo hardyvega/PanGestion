@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Dashboard;
 
+use App\Data\Dashboard\DashboardMetrics;
+use App\Enums\PermissionCode;
 use App\Models\User;
 use App\Services\Dashboard\DashboardService;
 use App\Support\Money;
@@ -71,8 +73,39 @@ final class DashboardTest extends TestCase
         $this->get('/inicio')->assertRedirect('/login');
     }
 
+    public function test_dashboard_changes_day_week_and_month_together_at_santiago_midnight(): void
+    {
+        $this->grantCashHistory($this->user->rol_id);
+        $this->actingAs($this->user);
+        $fixtures = [
+            [21, '2027-01-31', '2027-02-01 02:59:59+00', '130.00', $this->cashPaymentMethodId],
+            [22, '2027-02-01', '2027-02-01 03:00:00+00', '240.00', $this->debitPaymentMethodId],
+        ];
+        foreach ($fixtures as [$id, $day, $instant, $amount, $method]) {
+            $sale = $this->createSale($this->user->getKey(), $this->cashSessionId, $this->uuid($id), [
+                'fecha_comercial' => $day, 'numero_diario' => 1, 'total' => $amount, 'completada_en' => $instant,
+            ]);
+            $this->createSalePayment($sale, $method, $this->cashSessionId, $this->user->getKey(), $this->uuid($id + 100), [
+                'monto' => $amount, 'ocurrido_en' => $instant,
+            ]);
+        }
+
+        $this->travelTo(CarbonImmutable::parse('2027-02-01 02:59:59 UTC'));
+        $this->get('/inicio?period=mes')->assertOk()->assertSee('31/01/2027')
+            ->assertViewHas('metrics', fn ($metrics) => $metrics->salesToday === '130.00'
+                && $metrics->salesWeek === '130.00' && $metrics->salesMonth === '130.00'
+                && $metrics->cashToday === '130.00' && $metrics->debitToday === '0.00');
+        $this->travelTo(CarbonImmutable::parse('2027-02-01 03:00:00 UTC'));
+        $this->get('/inicio?period=semana')->assertOk()->assertSee('01/02/2027')
+            ->assertViewHas('metrics', fn ($metrics) => $metrics->salesToday === '240.00'
+                && $metrics->salesWeek === '240.00' && $metrics->salesMonth === '240.00'
+                && $metrics->cashToday === '0.00' && $metrics->debitToday === '240.00');
+    }
+
     public function test_dashboard_returns_exact_sales_and_payment_metrics(): void
     {
+        $this->grantCashHistory($this->user->rol_id);
+
         $todaySale = $this->createSale($this->user->getKey(), $this->cashSessionId, $this->uuid(1), [
             'fecha_comercial' => '2026-10-16',
             'numero_diario' => 1,
@@ -141,6 +174,74 @@ final class DashboardTest extends TestCase
         $this->assertSame('40.00', $metrics->debitToday);
         $this->assertSame('175.00', $metrics->salesWeek);
         $this->assertSame('215.00', $metrics->salesMonth);
+
+        foreach (['hoy', 'semana', 'mes'] as $period) {
+            $this->actingAs($this->user)->get('/inicio?period='.$period)
+                ->assertOk()
+                ->assertViewHas('selectedPeriod', $period)
+                ->assertSeeInOrder(['Hoy', 'Esta semana', 'Este mes'])
+                ->assertSeeTextInOrder([
+                    'Ventas de hoy', '$150', 'Efectivo de hoy', '$100', 'Débito de hoy', '$40',
+                    'Ventas de esta semana', '$175', 'Ventas de este mes', '$215',
+                ]);
+        }
+    }
+
+    public function test_daily_access_does_not_query_or_expose_other_periods_even_if_requested(): void
+    {
+        $sale = $this->createSale($this->user->getKey(), $this->cashSessionId, $this->uuid(31), [
+            'fecha_comercial' => '2026-10-16',
+            'numero_diario' => 1,
+            'total' => '150.00',
+            'completada_en' => '2026-10-16 12:00:00-03',
+        ]);
+        $this->createSalePayment($sale, $this->cashPaymentMethodId, $this->cashSessionId, $this->user->getKey(), $this->uuid(32), [
+            'monto' => '100.00',
+            'ocurrido_en' => '2026-10-16 12:10:00-03',
+        ]);
+        $this->createSalePayment($sale, $this->debitPaymentMethodId, $this->cashSessionId, $this->user->getKey(), $this->uuid(33), [
+            'monto' => '50.00',
+            'ocurrido_en' => '2026-10-16 12:10:00-03',
+        ]);
+        foreach ([34 => ['2026-10-12', '913.00'], 35 => ['2026-10-01', '824.00']] as $id => [$date, $amount]) {
+            $this->createSale($this->user->getKey(), $this->cashSessionId, $this->uuid($id), [
+                'fecha_comercial' => $date,
+                'numero_diario' => 1,
+                'total' => $amount,
+                'completada_en' => $date.' 12:00:00-03',
+            ]);
+        }
+
+        $this->actingAs($this->user);
+
+        foreach (['text/html', 'application/json'] as $accept) {
+            foreach (['', '?period=semana', '?period=mes'] as $query) {
+                DB::enableQueryLog();
+                try {
+                    $response = $this->get('/inicio'.$query, ['Accept' => $accept]);
+                    $salesQueries = collect(DB::getQueryLog())->filter(fn (array $entry): bool => str_contains($entry['query'], 'sales_amount'));
+                } finally {
+                    DB::disableQueryLog();
+                    DB::flushQueryLog();
+                }
+
+                $response->assertOk()
+                    ->assertViewHas('selectedPeriod', 'hoy')
+                    ->assertViewHas('metrics', fn (DashboardMetrics $metrics): bool => $metrics->salesWeek === null && $metrics->salesMonth === null)
+                    ->assertSeeTextInOrder(['Ventas de hoy', '$150', 'Efectivo de hoy', '$100', 'Débito de hoy', '$50'])
+                    ->assertDontSee('Ventas de esta semana')
+                    ->assertDontSee('Ventas de este mes')
+                    ->assertDontSee('Esta semana')
+                    ->assertDontSee('Este mes')
+                    ->assertDontSee('period=semana')
+                    ->assertDontSee('period=mes')
+                    ->assertDontSee('1.063')
+                    ->assertDontSee('1.887');
+
+                $this->assertCount(1, $salesQueries);
+                $this->assertSame(['2026-10-16', '2026-10-16'], array_slice($salesQueries->first()['bindings'], -2));
+            }
+        }
     }
 
     public function test_derived_order_payments_are_counted_once_from_order_history(): void
@@ -201,8 +302,8 @@ final class DashboardTest extends TestCase
         $this->assertSame(0, $metrics->salesTodayCount);
         $this->assertSame('0.00', $metrics->cashToday);
         $this->assertSame('0.00', $metrics->debitToday);
-        $this->assertSame('0.00', $metrics->salesWeek);
-        $this->assertSame('0.00', $metrics->salesMonth);
+        $this->assertNull($metrics->salesWeek);
+        $this->assertNull($metrics->salesMonth);
 
         $this->actingAs($this->user)
             ->get('/inicio')
@@ -237,6 +338,7 @@ final class DashboardTest extends TestCase
     public function test_dashboard_hides_financials_and_sales_action_without_sales_permission(): void
     {
         $roleId = $this->createRole(['codigo' => 'solo_consulta', 'nombre' => 'Administrador']);
+        $this->grantCashHistory($roleId);
         $user = User::query()->findOrFail($this->createUser($roleId, [
             'nombre' => 'Sin permiso',
             'nombre_usuario' => 'sin_permiso',
@@ -249,7 +351,8 @@ final class DashboardTest extends TestCase
         $response->assertOk()
             ->assertSee('Resumen disponible sin importes')
             ->assertDontSee('Nueva venta')
-            ->assertDontSee('$');
+            ->assertDontSee('Ventas de esta semana')
+            ->assertDontSee('class="metric-value"', false);
     }
 
     public function test_role_name_alone_does_not_grant_dashboard_financials_or_actions(): void
@@ -287,7 +390,7 @@ final class DashboardTest extends TestCase
         $this->actingAs($this->user)
             ->get('/ventas/nueva')
             ->assertOk()
-            ->assertSee('Punto de venta');
+            ->assertSee('<h1 id="sales-title">Nueva venta</h1>', false);
 
         $roleId = $this->createRole(['codigo' => 'sin_ventas', 'nombre' => 'Sin ventas']);
         $user = User::query()->findOrFail($this->createUser($roleId, [
@@ -301,6 +404,15 @@ final class DashboardTest extends TestCase
     {
         $this->assertSame('$125.000', Money::clp('125000.00'));
         $this->assertSame('-$1.250', Money::clp('-1250.00'));
+    }
+
+    private function grantCashHistory(int $roleId): void
+    {
+        $this->attachPermission($roleId, $this->createPermission([
+            'codigo' => PermissionCode::CashSessionsView->value,
+            'nombre' => 'Ver sesiones de caja',
+            'modulo' => 'caja',
+        ]));
     }
 
     private function uuid(int $number): string
