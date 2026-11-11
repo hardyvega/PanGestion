@@ -110,10 +110,12 @@ final class RecentSalesTest extends TestCase
         $client = $this->createClient();
         $order = $this->createOrder($client, $this->cashier->id, ['estado' => 'entregado', 'entregado_en' => now('UTC')]);
         $this->recordSale($this->cashier, 5, ['pedido_id' => $order, 'cliente_id' => $client, 'total' => '700']);
-        $this->createOrderPayment($order, $credit, $this->session, $this->cashier->id, (string) Str::uuid(), ['monto' => '700']);
+        $this->createOrderPayment($order, $credit, $this->session, $this->cashier->id, (string) Str::uuid(), [
+            'monto' => '700', 'ocurrido_en' => now('UTC'),
+        ]);
 
         $html = $this->actingAs($this->cashier)->getJson(route('sales.recent', $this->session))->assertOk()
-            ->assertJsonPath('collected.cash', '$1.600')->assertJsonPath('collected.digital', '$2.300')->json('html');
+            ->assertJsonPath('collected.cash', '$1.600')->assertJsonPath('collected.digital', '$3.000')->json('html');
         $this->assertSame(1, substr_count($html, '$1.500'));
         $this->assertSame(1, substr_count($html, 'Pago mixto'));
         $this->assertSame(1, substr_count($html, 'Efectivo'));
@@ -122,6 +124,41 @@ final class RecentSalesTest extends TestCase
         $this->assertStringContainsString('1,25 kg de &lt;b&gt;Nombre guardado&lt;/b&gt;', $html);
         $this->assertStringContainsString('y más', $html);
         $this->assertStringNotContainsString('Línea 3', $html);
+    }
+
+    public function test_partial_order_payments_count_before_delivery_only_for_the_current_session_and_supported_methods(): void
+    {
+        $colleague = $this->createSalesActor();
+        $client = $this->createClient();
+        $order = $this->createOrder($client, $colleague->id);
+        $this->createOrderDetail($order, $this->article, ['precio_unitario' => '10000.00']);
+
+        foreach ([
+            ['efectivo', 'Efectivo', '1200'],
+            ['debito', 'Débito', '1300'],
+            ['credito', 'Crédito', '1400'],
+            ['vale', 'Vale', '600'],
+        ] as [$code, $name, $amount]) {
+            $method = $this->createPaymentMethod(['codigo' => $code, 'nombre' => $name, 'afecta_efectivo' => $code === 'efectivo']);
+            $this->createOrderPayment($order, $method, $this->session, $colleague->id, (string) Str::uuid(), [
+                'monto' => $amount, 'ocurrido_en' => now('UTC'),
+            ]);
+        }
+
+        $otherRegister = $this->createCashRegister(['codigo' => 'otra', 'nombre' => 'Otra caja']);
+        $otherSession = $this->createOperationalCashSession($otherRegister, $colleague->id);
+        $cash = (int) DB::table('metodos_pago')->where('codigo', 'efectivo')->value('id');
+        $this->createOrderPayment($order, $cash, $otherSession, $colleague->id, (string) Str::uuid(), [
+            'monto' => '500', 'ocurrido_en' => now('UTC'),
+        ]);
+
+        $this->actingAs($this->cashier)->get(route('sales.create'))->assertOk()
+            ->assertSee('Todavía no hay ventas completadas')
+            ->assertSeeInOrder(['Total cobrado en efectivo', '$1.200', 'Total cobrado por medios digitales', '$2.700']);
+        $this->getJson(route('sales.recent', $this->session))->assertOk()
+            ->assertJsonPath('collected.cash', '$1.200')->assertJsonPath('collected.digital', '$2.700');
+        $this->assertDatabaseCount('ventas', 0);
+        $this->assertDatabaseCount('pagos_pedido', 5);
     }
 
     public function test_no_sales_means_zero_even_with_opening_fund_and_manual_movements(): void
