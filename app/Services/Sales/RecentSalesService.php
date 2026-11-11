@@ -28,8 +28,9 @@ final class RecentSalesService
             return null;
         }
 
+        $activeSession = $this->principalSession($today)->where('sesiones_caja.id', $session)->select('sesiones_caja.id');
         $completedSales = Venta::query()
-            ->whereIn('ventas.sesion_caja_id', $this->principalSession($today)->where('sesiones_caja.id', $session)->select('sesiones_caja.id'))
+            ->whereIn('ventas.sesion_caja_id', $activeSession)
             ->where('ventas.fecha_comercial', $today)
             ->where('ventas.estado', SaleStatus::Completed->value);
 
@@ -63,7 +64,7 @@ final class RecentSalesService
 
         return [
             'session' => (string) $session,
-            'collected' => $this->collectionTotals($completedSales),
+            'collected' => $this->collectionTotals($completedSales, $activeSession, $today),
             'rows' => $sales->map(static function (Venta $sale) use ($directMethods, $orderMethods): array {
                 $methods = $sale->pedido_id === null ? $directMethods->get($sale->id) : $orderMethods->get($sale->pedido_id);
                 $products = $sale->detalles->take(self::VISIBLE_LINES)->map(
@@ -87,20 +88,30 @@ final class RecentSalesService
     }
 
     /** @return array{cash: string, digital: string} */
-    private function collectionTotals(SaleQuery $completedSales): array
+    private function collectionTotals(SaleQuery $completedSales, Builder $activeSession, string $today): array
     {
-        $totals = $completedSales
+        $directPayments = $completedSales
             ->whereNull('ventas.pedido_id')
             ->join('pagos_venta as p', fn ($join) => $join->on('p.venta_id', '=', 'ventas.id')
                 ->on('p.sesion_caja_id', '=', 'ventas.sesion_caja_id'))
+            ->select('p.metodo_pago_id', 'p.tipo', 'p.monto')
+            ->toBase();
+
+        $day = CommercialDate::utcRange($today);
+        $orderPayments = DB::table('pagos_pedido as p')
+            ->whereIn('p.sesion_caja_id', $activeSession)
+            ->where('p.ocurrido_en', '>=', $day['start'])
+            ->where('p.ocurrido_en', '<', $day['end'])
+            ->select('p.metodo_pago_id', 'p.tipo', 'p.monto');
+
+        $totals = DB::query()->fromSub($directPayments->unionAll($orderPayments), 'p')
             ->join('metodos_pago as m', 'm.id', '=', 'p.metodo_pago_id')
-            ->where('p.tipo', PaymentType::Charge->value)
             ->whereIn('m.codigo', ['efectivo', 'debito', 'credito'])
             ->selectRaw(
-                'COALESCE(SUM(p.monto) FILTER (WHERE m.codigo = ?), 0) AS cash,
-                 COALESCE(SUM(p.monto) FILTER (WHERE m.codigo IN (?, ?)), 0) AS digital',
-                ['efectivo', 'debito', 'credito'],
-            )->toBase()->first();
+                'COALESCE(SUM(CASE WHEN p.tipo = ? THEN p.monto ELSE -p.monto END) FILTER (WHERE m.codigo = ?), 0) AS cash,
+                 COALESCE(SUM(CASE WHEN p.tipo = ? THEN p.monto ELSE -p.monto END) FILTER (WHERE m.codigo IN (?, ?)), 0) AS digital',
+                [PaymentType::Charge->value, 'efectivo', PaymentType::Charge->value, 'debito', 'credito'],
+            )->first();
 
         return [
             'cash' => Money::clpTotal((string) $totals->cash),

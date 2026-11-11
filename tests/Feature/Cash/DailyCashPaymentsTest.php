@@ -108,6 +108,27 @@ final class DailyCashPaymentsTest extends TestCase
         $this->assertSame($summary, $closed->cierre->fresh()->resumen);
     }
 
+    public function test_order_refund_reverses_the_pos_collection_and_restores_cash_balance(): void
+    {
+        $cash = $this->createPaymentMethod(['codigo' => 'efectivo', 'nombre' => 'Efectivo', 'afecta_efectivo' => true]);
+        $orders = app(OrderService::class);
+        $order = $orders->create($this->cashier, new CreateOrderCommand(
+            (string) Str::uuid(), $this->context['clientId'],
+            [new OrderLineData($this->context['articleId'], '1.000', '4.00')],
+            [new OrderPaymentData($cash, PaymentType::Charge, '4.00', (int) $this->session->id, (string) Str::uuid())],
+        ));
+        $recent = app(RecentSalesService::class);
+        $this->assertSame(['cash' => '$4', 'digital' => '$0'], $recent->current()['collected']);
+
+        $orders->cancel($this->cashier, new CancelOrderCommand((int) $order->id, (string) Str::uuid(), 'Devolución de prueba'));
+
+        $this->assertSame(['cash' => '$0', 'digital' => '$0'], $recent->current()['collected']);
+        $this->assertSame('100.00', app(CashService::class)->overview($this->owner, (int) $this->session->id)['theoretical']);
+        $this->assertDatabaseCount('pagos_pedido', 2);
+        $this->assertDatabaseCount('movimientos_caja', 2);
+        $this->assertDatabaseCount('ventas', 0);
+    }
+
     public function test_order_cancellation_after_closure_has_no_refund_or_inventory_effect(): void
     {
         $order = app(OrderService::class)->create($this->cashier, new CreateOrderCommand(
@@ -236,6 +257,8 @@ final class DailyCashPaymentsTest extends TestCase
         $today = $dashboard->summary($this->cashier);
         $this->assertSame(['0.00', '10000.00', '4000.00'], [$today->salesToday, $today->cashToday, $today->debitToday]);
         $this->assertNull($today->salesWeek);
+        $recent = app(RecentSalesService::class);
+        $this->assertSame(['cash' => '$10.000', 'digital' => '$5.000'], $recent->current()['collected']);
         $this->dailyClose($this->owner, $this->session, '10100', '50');
         $closure = DB::table('cierres_caja')->where('sesion_caja_id', $this->session->id)->value('resumen');
         $this->travel(1)->days();
@@ -259,11 +282,11 @@ final class DailyCashPaymentsTest extends TestCase
         $this->assertDatabaseHas('articulos', ['id' => $this->context['articleId'], 'stock_actual' => '10.000']);
         $this->assertSame($closure, DB::table('cierres_caja')->where('sesion_caja_id', $this->session->id)->value('resumen'));
 
-        $recent = app(RecentSalesService::class)->current();
-        $this->assertSame('Pedido N.º '.$order->id, $recent['rows'][0]['products']);
-        $this->assertSame(['cash' => '$0', 'digital' => '$0'], $recent['collected']);
-        $this->assertStringNotContainsString('Dedicatoria privada', json_encode($recent));
-        $this->assertStringNotContainsString('912345678', json_encode($recent));
+        $current = $recent->current();
+        $this->assertSame('Pedido N.º '.$order->id, $current['rows'][0]['products']);
+        $this->assertSame(['cash' => '$10.000', 'digital' => '$0'], $current['collected']);
+        $this->assertStringNotContainsString('Dedicatoria privada', json_encode($current));
+        $this->assertStringNotContainsString('912345678', json_encode($current));
 
         try {
             app(SaleService::class)->annul($this->cashier, new AnnulSaleCommand((int) $sale->id, (string) Str::uuid(), 'Pedido devuelto'));
